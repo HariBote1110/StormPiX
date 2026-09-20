@@ -102,7 +102,7 @@ function deltaPackedDecoder(width: number, height: number, colourCount: number, 
 }
 
 function emitDeltaPacked(width: number, height: number, colours: readonly string[], pixels: readonly number[]): string {
-  if (colours.length < 2 || colours.length > 16) return '';
+  if (colours.length < 2 || colours.length > 256) return '';
   const palette = colours.map((colour) => colour.split(',').map((value) => Number(value))).map((colour) => `{${colour.join(',')}}`).join(',');
   const data = encodeDeltaPixels(pixels, width, height, colours.length);
   return deltaPackedDecoder(width, height, colours.length, data, palette);
@@ -150,6 +150,7 @@ function emitPacked(ops: readonly DrawOp[]): string {
   // are still cheaper than a very large per-pixel table and retain the source
   // gradient exactly.
   if (colours.length > 16) {
+    if (deltaPacked) return deltaPacked;
     if (width * height > 2048) return emitTable(ops);
     let data = '';
     for (let pixel = 0; pixel < width * height; pixel += 1) {

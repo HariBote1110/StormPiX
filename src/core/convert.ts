@@ -45,21 +45,39 @@ function makeCandidate(source: Bitmap, palette: readonly Rgb[], indices: Uint16A
 }
 
 function makeOpsCandidate(source: Bitmap, palette: readonly Rgb[], ops: DrawOp[], strategies: readonly EmitStrategy[], budget: number): Candidate | undefined {
+  const emitted = strategies.map((strategy) => ({ strategy, lua: emitLua(ops, strategy) })).filter((entry) => entry.lua.length <= budget);
+  if (emitted.length === 0) return undefined;
   const rendered = render(ops, source.width, source.height);
   const metrics = { ssim: ssim(source, rendered), psnr: psnr(source, rendered), rmse: rmse(source, rendered) };
   let best: Candidate | undefined;
-  for (const strategy of strategies) {
-    const lua = emitLua(ops, strategy);
-    if (lua.length > budget) continue;
-    const candidate: Candidate = { ops, palette, strategy, lua, rendered, metrics };
+  for (const entry of emitted) {
+    const candidate: Candidate = { ops, palette, strategy: entry.strategy, lua: entry.lua, rendered, metrics };
     if (candidateBetter(candidate, best)) best = candidate;
   }
   return best;
 }
 
-function partialRefinementOps(source: Bitmap, palette: readonly Rgb[], indices: Uint16Array, baseColour: Rgb): DrawOp[] {
+interface RefinementPatch {
+  readonly ops: DrawOp[];
+  readonly score: number;
+}
+
+/** Try the most valuable single rectangles when a palette cannot fit outright. */
+function lowBudgetRefinement(
+  source: Bitmap,
+  palette: readonly Rgb[],
+  indices: Uint16Array,
+  strategies: readonly EmitStrategy[],
+  budget: number,
+): Candidate | undefined {
+  const baseColour = quantiseForQuality(source, 1).palette[0] ?? [0, 0, 0];
+  const baseOps: DrawOp[] = [
+    { type: 'setColour', r: baseColour[0], g: baseColour[1], b: baseColour[2] },
+    { type: 'rectF', x: 0, y: 0, w: source.width, h: source.height },
+  ];
+  let best = makeOpsCandidate(source, palette, baseOps, strategies, budget);
   const complete = cover({ width: source.width, height: source.height, indices }, palette);
-  const patches: { readonly ops: DrawOp[]; readonly gain: number; readonly cost: number }[] = [];
+  const patches: RefinementPatch[] = [];
   let colour: Rgb | undefined;
   for (const op of complete) {
     if (op.type === 'setColour') {
@@ -67,94 +85,24 @@ function partialRefinementOps(source: Bitmap, palette: readonly Rgb[], indices: 
       continue;
     }
     if (op.type !== 'rectF' || !colour) continue;
-    let gain = 0;
+    let errorReduction = 0;
     for (let y = op.y; y < op.y + op.h; y += 1) for (let x = op.x; x < op.x + op.w; x += 1) {
       const offset = (y * source.width + x) * 4;
       for (let channel = 0; channel < 3; channel += 1) {
         const sourceValue = source.data[offset + channel] ?? 0;
-        gain += (sourceValue - (baseColour[channel] ?? 0)) ** 2 - (sourceValue - (colour[channel] ?? 0)) ** 2;
+        errorReduction += (sourceValue - (baseColour[channel] ?? 0)) ** 2 - (sourceValue - (colour[channel] ?? 0)) ** 2;
       }
     }
     const patch: DrawOp[] = [{ type: 'setColour', r: colour[0], g: colour[1], b: colour[2] }, op];
-    patches.push({ ops: patch, gain, cost: emitLua(patch, 'direct').length });
+    const cost = emitLua(patch, 'direct').length;
+    patches.push({ ops: patch, score: cost > 0 ? errorReduction / cost : 0 });
   }
-  patches.sort((a, b) => (b.gain / b.cost) - (a.gain / a.cost) || b.gain - a.gain);
-  return patches.slice(0, 256).flatMap((patch) => patch.ops);
-}
-
-function meanColourPatches(source: Bitmap, baseColour: Rgb, size: number): DrawOp[] {
-  const patches: { readonly ops: DrawOp[]; readonly gain: number; readonly cost: number }[] = [];
-  for (let y = 0; y < source.height; y += size) for (let x = 0; x < source.width; x += size) {
-      const endX = Math.min(source.width, x + size);
-      const endY = Math.min(source.height, y + size);
-      let red = 0;
-      let green = 0;
-      let blue = 0;
-      let count = 0;
-      for (let py = y; py < endY; py += 1) for (let px = x; px < endX; px += 1) {
-        const offset = (py * source.width + px) * 4;
-        red += source.data[offset] ?? 0;
-        green += source.data[offset + 1] ?? 0;
-        blue += source.data[offset + 2] ?? 0;
-        count += 1;
-      }
-      const colour: Rgb = [Math.round(red / count), Math.round(green / count), Math.round(blue / count)];
-      let gain = 0;
-      for (let py = y; py < endY; py += 1) for (let px = x; px < endX; px += 1) {
-        const offset = (py * source.width + px) * 4;
-        for (let channel = 0; channel < 3; channel += 1) {
-          const sourceValue = source.data[offset + channel] ?? 0;
-          gain += (sourceValue - (baseColour[channel] ?? 0)) ** 2 - (sourceValue - (colour[channel] ?? 0)) ** 2;
-        }
-      }
-      const ops: DrawOp[] = [{ type: 'setColour', r: colour[0], g: colour[1], b: colour[2] }, { type: 'rectF', x, y, w: endX - x, h: endY - y }];
-    patches.push({ ops, gain, cost: emitLua(ops, 'direct').length });
+  patches.sort((left, right) => right.score - left.score);
+  for (const patch of patches.slice(0, 12)) {
+    const candidate = makeOpsCandidate(source, palette, [...baseOps, ...patch.ops], strategies, budget);
+    if (candidate && candidateBetter(candidate, best)) best = candidate;
   }
-  patches.sort((a, b) => (b.gain / b.cost) - (a.gain / a.cost) || b.gain - a.gain);
-  return patches.slice(0, 64).flatMap((patch) => patch.ops);
-}
-
-function greedyRefinement(
-  source: Bitmap,
-  palette: readonly Rgb[],
-  baseOps: DrawOp[],
-  patches: readonly DrawOp[],
-  strategies: readonly EmitStrategy[],
-  budget: number,
-  deadline: number,
-): Candidate | undefined {
-  let current = makeOpsCandidate(source, palette, baseOps, strategies, budget);
-  if (!current) return undefined;
-  const used = new Set<number>();
-  for (let iteration = 0; iteration < 8; iteration += 1) {
-    if (performance.now() >= deadline) break;
-    let bestAddition: DrawOp[] | undefined;
-    let bestIndex = -1;
-    let bestRatio = 0;
-    const limit = Math.min(patches.length / 2, 16);
-    for (let patch = 0; patch < limit; patch += 1) {
-      if (used.has(patch)) continue;
-      const first = patches[patch * 2];
-      const second = patches[patch * 2 + 1];
-      if (!first || !second) continue;
-      const candidateOps = [...current.ops, first, second];
-      const candidateRendered = render(candidateOps, source.width, source.height);
-      const gain = ssim(source, candidateRendered) - current.metrics.ssim;
-      const cost = emitLua(candidateOps, 'direct').length - emitLua(current.ops, 'direct').length;
-      const ratio = cost > 0 ? gain / cost : 0;
-      if (gain > 1e-12 && ratio > bestRatio) {
-        bestAddition = candidateOps;
-        bestIndex = patch;
-        bestRatio = ratio;
-      }
-    }
-    if (!bestAddition || bestIndex < 0) break;
-    const next = makeOpsCandidate(source, palette, bestAddition, strategies, budget);
-    if (!next || next.metrics.ssim <= current.metrics.ssim + 1e-12) break;
-    current = next;
-    used.add(bestIndex);
-  }
-  return current;
+  return best;
 }
 
 function makeDefaultColourCandidate(source: Bitmap, strategies: readonly EmitStrategy[], budget: number): Candidate | undefined {
@@ -173,19 +121,20 @@ function makeDefaultColourCandidate(source: Bitmap, strategies: readonly EmitStr
   };
 }
 
-function useRemainingBudget(candidate: Candidate, budget: number): Candidate {
-  if (candidate.metrics.ssim >= 0.999) return candidate;
-  const target = Math.ceil(budget * 0.85);
-  if (candidate.lua.length >= target || target > budget) return candidate;
-  return { ...candidate, lua: `${candidate.lua}${' '.repeat(target - candidate.lua.length)}` };
-}
-
 function maxColoursSequence(maxColours: number): number[] {
   const values = new Set<number>();
   const cap = Math.max(1, Math.floor(maxColours));
   values.add(cap);
-  for (const value of [16, 12, 10, 8, 6, 4, 3, 2, 1]) if (value <= cap) values.add(value);
+  for (const value of [256, 192, 160, 128, 96, 80, 64, 48, 32, 24, 20, 16, 12, 10, 8, 6, 4, 3, 2, 1]) if (value <= cap) values.add(value);
   return [...values].sort((a, b) => b - a);
+}
+
+function budgetColourCap(budget: number, maxColours: number, explicit: boolean): number {
+  if (explicit) return maxColours;
+  if (budget < 1000) return Math.min(maxColours, 16);
+  if (budget < 2500) return Math.min(maxColours, 32);
+  if (budget < 5000) return Math.min(maxColours, 64);
+  return maxColours;
 }
 
 function blockSizes(source: Bitmap): number[] {
@@ -327,9 +276,10 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   const started = performance.now();
   const budget = options.budget ?? DEFAULT_BUDGET;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_BUDGET);
-  const deadline = started + Math.max(1, Math.min(timeBudgetMs, 4000));
+  const deadline = started + Math.max(1, Math.min(timeBudgetMs, 1000));
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
-  const maxColours = Math.max(1, Math.floor(options.maxColours ?? 16));
+  const maxColours = Math.max(1, Math.floor(options.maxColours ?? 256));
+  const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
   let best: Candidate | undefined;
   let lastPalette: readonly Rgb[] = [[0, 0, 0]];
 
@@ -344,7 +294,7 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
       const exactCandidate = makeCandidate(source, exact.palette, exact.indices, strategies, budget);
       if (exactCandidate && candidateBetter(exactCandidate, best)) best = exactCandidate;
     }
-    outer: for (const colourCount of maxColoursSequence(maxColours)) {
+    outer: for (const colourCount of maxColoursSequence(searchColours)) {
       if (performance.now() >= deadline) break;
       const quantised = quantiseForQuality(source, colourCount, { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
       lastPalette = quantised.palette;
@@ -355,18 +305,10 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
         if (candidate && candidateBetter(candidate, best)) best = candidate;
       }
     }
-    if (performance.now() < deadline && maxColours > 1) {
-      const refinement = quantiseForQuality(source, maxColours);
-      const baseColour = base.palette[0] ?? [0, 0, 0];
-      const baseOps: DrawOp[] = [{ type: 'setColour', r: baseColour[0], g: baseColour[1], b: baseColour[2] }, { type: 'rectF', x: 0, y: 0, w: source.width, h: source.height }];
-      const patches = partialRefinementOps(source, refinement.palette, refinement.indices, baseColour);
-      const refined = greedyRefinement(source, refinement.palette, baseOps, patches, strategies, budget, deadline);
+    if (budget <= 1000 && searchColours > 1 && performance.now() < deadline) {
+      const refinement = quantiseForQuality(source, Math.min(searchColours, 16), { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
+      const refined = lowBudgetRefinement(source, refinement.palette, refinement.indices, strategies, budget);
       if (refined && candidateBetter(refined, best)) best = refined;
-      for (const size of [3, 4, 6, 8]) {
-        const meanPatches = meanColourPatches(source, baseColour, size);
-        const refinedMean = greedyRefinement(source, refinement.palette, baseOps, meanPatches, strategies, budget, deadline);
-        if (refinedMean && candidateBetter(refinedMean, best)) best = refinedMean;
-      }
     }
   }
 
@@ -385,7 +327,6 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
     };
   }
 
-  best = useRemainingBudget(best, budget);
   const charCount = best.lua.length;
   const elapsedMs = performance.now() - started;
   return {
@@ -418,7 +359,8 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? 5000);
   const deadline = started + timeBudgetMs;
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
-  const maxColours = Math.max(1, Math.floor(options.maxColours ?? 16));
+  const maxColours = Math.max(1, Math.floor(options.maxColours ?? 256));
+  const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
   const ticksPerFrame = Number.isFinite(options.ticksPerFrame) ? Math.max(1, Math.floor(options.ticksPerFrame as number)) : 6;
   let best: AnimationCandidate | undefined;
   let shortest: AnimationCandidate | undefined;
@@ -435,7 +377,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
     consider(exact.palette, exact.indices);
   }
   const combined = combinedFrames(frames);
-  outer: for (const colourCount of maxColoursSequence(maxColours)) {
+  outer: for (const colourCount of maxColoursSequence(searchColours)) {
     if (performance.now() >= deadline) break;
     const quantised = quantiseForQuality(combined, colourCount, { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
     lastPalette = quantised.palette;
