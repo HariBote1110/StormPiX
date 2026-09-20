@@ -280,23 +280,27 @@ function compactAnimationTick(ticksPerFrame: number, frameCount: number): string
   return `f=0 t=0 function onTick()t=t+1 if t==${ticksPerFrame} then t=0 f=(f+1)%${frameCount} end end `;
 }
 
+function compactAnimationBranches(bodies: readonly { readonly body: string }[]): string {
+  return bodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('');
+}
+
 /** Emit a compact, self-contained animation used by lossless multi-script output. */
 export function emitAnimationLuaCompact(frameOps: readonly (readonly DrawOp[])[], ticksPerFrame = 6): string {
   if (frameOps.length === 0) return 'function onDraw()end';
   const plainBodies = frameOps.map((ops) => compactAnimationBody(ops, undefined));
   const uses = new Set<string>(plainBodies.flatMap((entry) => [...entry.uses]));
-  const plain = `${compactAnimationPrefix(uses, undefined)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${plainBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`;
+  const plain = `${compactAnimationPrefix(uses, undefined)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(plainBodies)}end end`;
   const colours = [...new Set(frameOps.flatMap((ops) => ops.filter((op): op is Extract<DrawOp, { type: 'setColour' }> => op.type === 'setColour' && op.a === undefined).map((op) => `${op.r},${op.g},${op.b}`)))];
   if (colours.length === 0) return plain;
   const paletteBodies = frameOps.map((ops) => compactAnimationBody(ops, colours));
   const paletteUses = new Set<string>(paletteBodies.flatMap((entry) => [...entry.uses]));
-  const palette = `${compactAnimationPrefix(paletteUses, colours)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${paletteBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`;
+  const palette = `${compactAnimationPrefix(paletteUses, colours)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(paletteBodies)}end end`;
   const greyscale = colours.every((value) => {
     const channels = value.split(',');
     return channels[0] === channels[1] && channels[1] === channels[2];
   });
   const greyPalette = greyscale
-    ? `${compactAnimationPrefix(paletteUses, colours, true)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${paletteBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`
+    ? `${compactAnimationPrefix(paletteUses, colours, true)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(paletteBodies)}end end`
     : '';
   return [plain, palette, greyPalette].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string;
 }
