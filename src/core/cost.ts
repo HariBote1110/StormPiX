@@ -1,3 +1,4 @@
+import { render } from './render.ts';
 import type { DrawOp, EmitStrategy } from './types.ts';
 
 export class NotImplementedError extends Error {
@@ -11,32 +12,115 @@ function numberText(value: number): string {
   return Object.is(value, -0) ? '0' : String(value);
 }
 
-/** Emit the complete direct onDraw Lua script used by the Phase 1 cost model. */
-export function emitDirect(ops: readonly DrawOp[]): string {
-  const lines = ['function onDraw()'];
+function directBody(ops: readonly DrawOp[], names: { readonly colour: string; readonly rectF: string; readonly rect: string; readonly line: string }): string {
+  let currentColour: string | undefined;
+  const statements: string[] = [];
   for (const op of ops) {
     switch (op.type) {
-      case 'setColour':
-        lines.push(`screen.setColor(${numberText(op.r)},${numberText(op.g)},${numberText(op.b)})`);
+      case 'setColour': {
+        const statement = `${names.colour}(${numberText(op.r)},${numberText(op.g)},${numberText(op.b)})`;
+        if (statement !== currentColour) statements.push(statement);
+        currentColour = statement;
         break;
-      case 'rectF':
-        lines.push(`screen.drawRectF(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`);
-        break;
-      case 'rect':
-        lines.push(`screen.drawRect(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`);
-        break;
-      case 'line':
-        lines.push(`screen.drawLine(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)})`);
-        break;
+      }
+      case 'rectF': statements.push(`${names.rectF}(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
+      case 'rect': statements.push(`${names.rect}(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
+      case 'line': statements.push(`${names.line}(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)})`); break;
     }
   }
-  lines.push('end');
-  return `${lines.join('\n')}\n`;
+  return statements.join('');
+}
+
+function directInline(ops: readonly DrawOp[]): string {
+  return `function onDraw()${directBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' })}end`;
+}
+
+function directHoisted(ops: readonly DrawOp[]): string {
+  const prefix = 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine ';
+  return `${prefix}function onDraw()${directBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L' })}end`;
+}
+
+/** Minified direct emitter. The shortest semantically equivalent form wins. */
+export function emitDirect(ops: readonly DrawOp[]): string {
+  const inline = directInline(ops);
+  const hoisted = directHoisted(ops);
+  return hoisted.length < inline.length ? hoisted : inline;
+}
+
+function isRectProgram(ops: readonly DrawOp[]): boolean {
+  return ops.every((op) => op.type === 'setColour' || op.type === 'rectF');
+}
+
+const BASE64_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/';
+
+function emitTable(ops: readonly DrawOp[]): string {
+  if (!isRectProgram(ops)) return emitDirect(ops);
+  let colour: Extract<DrawOp, { type: 'setColour' }> | undefined;
+  const values: string[] = [];
+  for (const op of ops) {
+    if (op.type === 'setColour') colour = op;
+    else if (op.type === 'rectF' && colour) values.push(numberText(colour.r), numberText(colour.g), numberText(colour.b), numberText(op.x), numberText(op.y), numberText(op.w), numberText(op.h));
+  }
+  return `function onDraw()local d={${values.join(',')}}for i=1,#d,7 do screen.setColor(d[i],d[i+1],d[i+2])screen.drawRectF(d[i+3],d[i+4],d[i+5],d[i+6])end end`;
+}
+
+function emitPacked(ops: readonly DrawOp[]): string {
+  if (!isRectProgram(ops)) return emitDirect(ops);
+  let width = 0;
+  let height = 0;
+  for (const op of ops) {
+    if (op.type === 'rectF') {
+      width = Math.max(width, Math.trunc(op.x + op.w));
+      height = Math.max(height, Math.trunc(op.y + op.h));
+    }
+  }
+  if (width <= 0 || height <= 0) return 'function onDraw()end';
+  const bitmap = render(ops, width, height);
+  const colours: string[] = [];
+  const colourMap = new Map<string, number>();
+  const pixels: number[] = [];
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const offset = pixel * 4;
+    const key = `${bitmap.data[offset] ?? 0},${bitmap.data[offset + 1] ?? 0},${bitmap.data[offset + 2] ?? 0}`;
+    let index = colourMap.get(key);
+    if (index === undefined) {
+      index = colours.length;
+      colourMap.set(key, index);
+      colours.push(key);
+    }
+    pixels.push(index);
+  }
+  // Decimal glyphs keep the decoder tiny. For small images, raw RGB nibbles
+  // are still cheaper than a very large per-pixel table and retain the source
+  // gradient exactly.
+  if (colours.length > 16) {
+    if (width * height > 2048) return emitTable(ops);
+    let data = '';
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      const offset = pixel * 4;
+      for (let channel = 0; channel < 3; channel += 1) data += (bitmap.data[offset + channel] ?? 0).toString(16).padStart(2, '0');
+    }
+    return `function onDraw()local d="${data}"for i=1,#d,6 do local z=(i-1)/6 screen.setColor(tonumber(string.sub(d,i,i+1),16),tonumber(string.sub(d,i+2,i+3),16),tonumber(string.sub(d,i+4,i+5),16))screen.drawRectF(z%${width},math.floor(z/${width}),1,1)end end`;
+  }
+  const palette = colours.map((colour) => `{${colour}}`).join(',');
+  if (colours.length <= 10) {
+    const data = pixels.join('');
+    return `function onDraw()local p={${palette}}local d="${data}"for i=1,#d do local c=p[string.byte(d,i)-47]local z=i-1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)end end`;
+  }
+  let data = '';
+  for (let pixel = 0; pixel < pixels.length; pixel += 4) {
+    const value = (pixels[pixel] ?? 0) * 4096 + (pixels[pixel + 1] ?? 0) * 256 + (pixels[pixel + 2] ?? 0) * 16 + (pixels[pixel + 3] ?? 0);
+    data += BASE64_ALPHABET[Math.floor(value / 4096)] ?? '0';
+    data += BASE64_ALPHABET[Math.floor(value / 64) % 64] ?? '0';
+    data += BASE64_ALPHABET[value % 64] ?? '0';
+  }
+  return `function onDraw()local a="${BASE64_ALPHABET}"local p={${palette}}local d="${data}"local i=0 local t=${pixels.length} for k=1,#d,3 do local v=(string.find(a,string.sub(d,k,k),1,true)-1)*4096+(string.find(a,string.sub(d,k+1,k+1),1,true)-1)*64+string.find(a,string.sub(d,k+2,k+2),1,true)-1 for j=1,4 do if i<t then local n=math.floor(v/4096)local c=p[n+1]local z=i i=i+1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)v=(v-n*4096)*16 end end end end`;
 }
 
 export function emitLua(ops: readonly DrawOp[], strategy: EmitStrategy): string {
   if (strategy === 'direct') return emitDirect(ops);
-  throw new NotImplementedError(`NotImplementedError: emit strategy "${strategy}" is not implemented in Phase 1`);
+  if (strategy === 'table') return emitTable(ops);
+  return emitPacked(ops);
 }
 
 export function costOf(ops: readonly DrawOp[], strategy: EmitStrategy): number {

@@ -113,3 +113,18 @@ export function psnr(a: Bitmap, b: Bitmap): number {
   if (meanSquaredError === 0) return Infinity;
   return 10 * Math.log10((LUMA_MAX * LUMA_MAX) / meanSquaredError);
 }
+
+export function rmse(a: Bitmap, b: Bitmap): number {
+  checkDimensions(a, b);
+  if (a.width === 0 || a.height === 0) return 0;
+  let squaredError = 0;
+  const channelCount = a.width * a.height * 3;
+  for (let pixel = 0; pixel < a.width * a.height; pixel += 1) {
+    const offset = pixel * 4;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const difference = (a.data[offset + channel] ?? 0) - (b.data[offset + channel] ?? 0);
+      squaredError += difference * difference;
+    }
+  }
+  return Math.sqrt(squaredError / channelCount);
+}

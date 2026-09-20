@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { costOf, emitDirect, type DrawOp } from '../src/core/index';
+import { costOf, emitDirect, emitLua, type DrawOp } from '../src/core/index';
 
 const ops: DrawOp[] = [
   { type: 'setColour', r: 1, g: 2, b: 3 },
@@ -22,8 +22,8 @@ describe('direct Lua cost', () => {
     expect(conversionArtifact.charCount).toBe(conversionArtifact.lua.length);
   });
 
-  it('rejects strategies that are not implemented in Phase 1', () => {
-    expect(() => costOf(ops, 'table')).toThrowError(/NotImplemented/);
-    expect(() => costOf(ops, 'packed')).toThrowError(/NotImplemented/);
+  it('measures the table and packed emitters from their exact output', () => {
+    expect(costOf(ops, 'table')).toBe(emitLua(ops, 'table').length);
+    expect(costOf(ops, 'packed')).toBe(emitLua(ops, 'packed').length);
   });
 });

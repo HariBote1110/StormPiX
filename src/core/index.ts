@@ -9,5 +9,9 @@ export type {
   Rgb,
 } from './types.ts';
 export { costOf, emitDirect, emitLua, NotImplementedError } from './cost.ts';
+export { convert } from './convert.ts';
+export { cover, coverCost, coverScanline } from './cover.ts';
+export { orderOps } from './order.ts';
+export { blockify, quantise, rgbToOklab } from './quantise.ts';
 export { render } from './render.ts';
-export { psnr, ssim } from './metrics.ts';
+export { psnr, rmse, ssim } from './metrics.ts';
