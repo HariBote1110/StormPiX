@@ -9,7 +9,7 @@ describe('compare benchmark model', () => {
   it('reconstructs filled V, H and R rectangles in draw order', () => {
     const rendered = renderIndexedRectangles(4, 3, [
       { kind: 'R', x: 0, y: 0, w: 2, h: 2, colour: 1 },
-      { kind: 'H', x: 1, y: 1, w: 3, h: 1, colour: 2 },
+      { kind: 'H', x: 1, y: 1, w: 3, colour: 2 },
       { kind: 'V', x: 3, y: 0, h: 3, colour: 3 },
     ], 0);
 
