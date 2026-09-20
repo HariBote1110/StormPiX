@@ -123,6 +123,10 @@ describe('convert', () => {
     const second = convert(source, { seed: 11, maxColours: 2 });
     expect(second.lua).toBe(first.lua);
     expect(Array.from(second.rendered.data)).toEqual(Array.from(first.rendered.data));
+
+    const boundaryFirst = convert(photoLike(), { budget: 6400, seed: 0, timeBudgetMs: 1200 });
+    const boundarySecond = convert(photoLike(), { budget: 6400, seed: 0, timeBudgetMs: 1200 });
+    expect(boundarySecond.lua).toBe(boundaryFirst.lua);
   });
 
   it('does not spend more characters or claim higher quality at a lower budget', () => {
@@ -160,7 +164,7 @@ describe('convert', () => {
 
   it('keeps quality monotonic across packed strategy boundaries', () => {
     const source = photoLike();
-    const budgets = [4500, 5000, 5500, 6000, 6500, 7000];
+    const budgets = [4500, 5000, 5500, 5600, 5700, 5800, 6000, 6300, 6400, 6500, 7000];
     const results = budgets.map((budget) => convert(source, { budget, seed: 0, timeBudgetMs: 1200 }));
 
     for (let index = 1; index < results.length; index += 1) {

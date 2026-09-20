@@ -15,6 +15,7 @@ import {
 
 const BUDGET = 8192;
 const BUDGET_SWEEP = [60, 100, 200, 300, 500, 1000, 2000, 4000, 8192] as const;
+const DENSE_BUDGET_SWEEP = [...Array.from({ length: Math.floor((8100 - 500) / 100) + 1 }, (_, index) => 500 + index * 100), 8192];
 
 function bitmapFromPixels(width: number, height: number, colourAt: (x: number, y: number) => Rgb): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -140,6 +141,46 @@ if (photo) {
     const result = convert(photo, { budget, seed: 0, timeBudgetMs: 5000 });
     console.log(`${budget}\t${result.charCount}\t${((result.charCount / budget) * 100).toFixed(1)}%\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.elapsedMs.toFixed(2)}`);
   }
+
+  const denseResults = DENSE_BUDGET_SWEEP.map((budget) => ({ budget, result: convert(photo, { budget, seed: 0, timeBudgetMs: 5000 }) }));
+  let minimumSsimDelta = Infinity;
+  let worstSsimPair: readonly [number, number] = [0, 0];
+  let minimumCharDelta = Infinity;
+  let worstCharPair: readonly [number, number] = [0, 0];
+  let ssimViolations = 0;
+  let charViolations = 0;
+  let maximumElapsedMs = 0;
+  for (let index = 1; index < denseResults.length; index += 1) {
+    const previous = denseResults[index - 1] as { budget: number; result: ReturnType<typeof convert> };
+    const current = denseResults[index] as { budget: number; result: ReturnType<typeof convert> };
+    const ssimDelta = current.result.metrics.ssim - previous.result.metrics.ssim;
+    const charDelta = current.result.charCount - previous.result.charCount;
+    maximumElapsedMs = Math.max(maximumElapsedMs, current.result.stats.elapsedMs);
+    if (ssimDelta < -0.0005) ssimViolations += 1;
+    if (charDelta < 0) charViolations += 1;
+    if (ssimDelta < minimumSsimDelta) {
+      minimumSsimDelta = ssimDelta;
+      worstSsimPair = [previous.budget, current.budget];
+    }
+    if (charDelta < minimumCharDelta) {
+      minimumCharDelta = charDelta;
+      worstCharPair = [previous.budget, current.budget];
+    }
+  }
+  let noPaddingViolations = 0;
+  for (let lower = 0; lower < denseResults.length; lower += 1) {
+    for (let higher = lower + 1; higher < denseResults.length; higher += 1) {
+      const previous = denseResults[lower] as { budget: number; result: ReturnType<typeof convert> };
+      const current = denseResults[higher] as { budget: number; result: ReturnType<typeof convert> };
+      if (current.result.metrics.ssim <= previous.result.metrics.ssim + 0.0005 && current.result.charCount !== previous.result.charCount) noPaddingViolations += 1;
+    }
+  }
+  console.log('\nDENSE MONOTONICITY (photo-96)');
+  console.log(`budgets\t${DENSE_BUDGET_SWEEP[0]}..${DENSE_BUDGET_SWEEP[DENSE_BUDGET_SWEEP.length - 1]} step 100`);
+  console.log(`minimumConsecutiveSsimDelta\t${minimumSsimDelta.toFixed(6)}\tworstPair\t${worstSsimPair[0]}->${worstSsimPair[1]}`);
+  console.log(`minimumConsecutiveCharDelta\t${minimumCharDelta}\tworstPair\t${worstCharPair[0]}->${worstCharPair[1]}`);
+  console.log(`ssimViolations\t${ssimViolations}\tcharViolations\t${charViolations}\tmaximumElapsedMs\t${maximumElapsedMs.toFixed(2)}`);
+  console.log(`noPaddingViolations\t${noPaddingViolations}`);
 }
 
 console.log('\nANIMATION');

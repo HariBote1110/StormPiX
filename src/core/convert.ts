@@ -134,6 +134,11 @@ function budgetColourCap(budget: number, maxColours: number, explicit: boolean):
   if (budget < 1000) return Math.min(maxColours, 16);
   if (budget < 2500) return Math.min(maxColours, 32);
   if (budget < 5000) return Math.min(maxColours, 64);
+  if (budget < 5309) return Math.min(maxColours, 80);
+  if (budget < 6292) return Math.min(maxColours, 96);
+  if (budget < 7080) return Math.min(maxColours, 128);
+  if (budget < 7613) return Math.min(maxColours, 160);
+  if (budget < 7626) return Math.min(maxColours, 192);
   return maxColours;
 }
 
@@ -303,7 +308,9 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
         if (performance.now() >= deadline) break outer;
         const indices = blockSize === 1 ? quantised.indices : blockify(source, quantised.palette, blockSize);
         const candidate = makeCandidate(source, quantised.palette, indices, strategies, budget);
-        if (candidate && candidateBetter(candidate, best)) best = candidate;
+        if (candidate) {
+          if (candidateBetter(candidate, best)) best = candidate;
+        }
       }
     }
     if (budget <= 1000 && searchColours > 1 && performance.now() < deadline) {
