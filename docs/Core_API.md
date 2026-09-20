@@ -106,3 +106,48 @@ export function psnr(a: Bitmap, b: Bitmap): number;
 エンコーディングは、全フレームを描く形式と、フレーム 0 を完全描画して以降のフレームを直前との差分だけ描く形式を実測比較し、文字数の短い方を選ぶ。差分形式ではループ境界でフレーム 0 を完全描画するため、最後のフレームから最初のフレームへ戻っても状態が壊れない。差分が有利でないアニメーションは全フレーム形式にフォールバックする。
 
 複数フレームの `result.rendered` は生成コードが最初に描くフレームのプレビューであり、`result.metrics` の `ssim`、`psnr`、`rmse` は各フレームを個別に計測した値の算術平均である。`ConvertStats` の `frameCount`、`frameOps`、`encoding`、`fullFrameChars` はアニメーション時だけ提供される任意フィールドで、既存フィールドの意味は単一画像と同じである。
+
+## 複数スクリプト出力（Phase 5 で追加）
+
+既定の目的関数を「予算内で品質最大化」から「**可逆性を保ったまま文字数最小化**」へ変更する。
+収まらない場合は品質ではなくスクリプト数を増やす（storm-kamishibai と同じ設計判断）。
+
+```ts
+export type ConvertMode =
+  /** 1スクリプトに収める。収まらなければ品質を落とす（Phase 1〜4 の挙動） */
+  | 'fit'
+  /** 品質を保つ。収まらなければ複数スクリプトに分割する */
+  | 'lossless';
+
+export interface ConvertOptions {
+  // ...既存のフィールド
+  /** 既定は 'lossless' */
+  mode?: ConvertMode;
+}
+
+export interface ConvertResult {
+  // ...既存のフィールド
+
+  /** 生成された全スクリプト。各要素は budget 以内。単一スクリプトなら長さ1 */
+  readonly scripts: readonly string[];
+  /** scripts の文字数合計 */
+  readonly totalCharCount: number;
+}
+```
+
+### 後方互換の規約
+
+- `lua` は常に `scripts[0]` と同一
+- `charCount` は常に `lua.length`（＝ `scripts[0].length`）であり、合計ではない
+- `withinBudget` は**全スクリプト**が budget 以内であることを意味する
+- 単一スクリプトの結果では `scripts.length === 1` かつ `totalCharCount === charCount`
+
+既存の UI とテストは `lua` / `charCount` / `withinBudget` のみを参照するため、この規約により無改修で動作する。
+
+### 不変条件（追加）
+
+7. `result.lua === result.scripts[0]`
+8. `result.totalCharCount === scripts.reduce((n, s) => n + s.length, 0)`
+9. `result.withinBudget === scripts.every((s) => s.length <= budget)`
+10. `mode: 'lossless'` のとき `metrics.ssim === 1` （分割してでも可逆を守る）
+11. スクリプト数は最小であること — 同じ可逆出力をより少ないスクリプト数で表現できてはならない
