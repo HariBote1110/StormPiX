@@ -5,6 +5,8 @@ export interface LabelImage {
   readonly width: number;
   readonly height: number;
   readonly indices: Uint16Array;
+  /** When present, zero-valued pixels are transparent and are not covered. */
+  readonly changed?: Uint8Array;
 }
 
 function numberText(value: number): string {
@@ -15,7 +17,7 @@ function rectCost(x: number, y: number, w: number, h: number): number {
   return `screen.drawRectF(${numberText(x)},${numberText(y)},${numberText(w)},${numberText(h)})`.length;
 }
 
-function rectangleOps(indices: ArrayLike<number>, width: number, height: number, palette: readonly Rgb[], improve: boolean): DrawOp[] {
+function rectangleOps(indices: ArrayLike<number>, width: number, height: number, palette: readonly Rgb[], improve: boolean, changed?: Uint8Array): DrawOp[] {
   type Rectangle = { colour: number; x: number; y: number; w: number; h: number };
   const rectangles: Rectangle[] = [];
   const active = new Map<string, Rectangle>();
@@ -23,9 +25,13 @@ function rectangleOps(indices: ArrayLike<number>, width: number, height: number,
     const next = new Map<string, Rectangle>();
     let x = 0;
     while (x < width) {
+      if (changed && changed[y * width + x] === 0) {
+        x += 1;
+        continue;
+      }
       const colour = indices[y * width + x] ?? 0;
       let runWidth = 1;
-      while (x + runWidth < width && indices[y * width + x + runWidth] === colour) runWidth += 1;
+      while (x + runWidth < width && changed?.[y * width + x + runWidth] !== 0 && indices[y * width + x + runWidth] === colour) runWidth += 1;
       const key = `${colour}:${x}:${runWidth}`;
       const previous = active.get(key);
       if (previous && previous.y + previous.h === y) {
@@ -115,7 +121,7 @@ export function coverScanline(image: LabelImage, palette: readonly Rgb[]): DrawO
 
 /** Largest-cheapest-first covering; its score uses emitted rectangle characters, not area. */
 export function cover(image: LabelImage, palette: readonly Rgb[]): DrawOp[] {
-  return rectangleOps(image.indices, image.width, image.height, palette, true);
+  return rectangleOps(image.indices, image.width, image.height, palette, true, image.changed);
 }
 
 export function coverCost(ops: readonly DrawOp[]): number {

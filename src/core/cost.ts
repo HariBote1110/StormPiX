@@ -12,7 +12,7 @@ function numberText(value: number): string {
   return Object.is(value, -0) ? '0' : String(value);
 }
 
-function directBody(ops: readonly DrawOp[], names: { readonly colour: string; readonly rectF: string; readonly rect: string; readonly line: string }): string {
+export function emitDirectBody(ops: readonly DrawOp[], names: { readonly colour: string; readonly rectF: string; readonly rect: string; readonly line: string }): string {
   let currentColour: string | undefined;
   const statements: string[] = [];
   for (const op of ops) {
@@ -32,12 +32,12 @@ function directBody(ops: readonly DrawOp[], names: { readonly colour: string; re
 }
 
 function directInline(ops: readonly DrawOp[]): string {
-  return `function onDraw()${directBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' })}end`;
+  return `function onDraw()${emitDirectBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' })}end`;
 }
 
 function directHoisted(ops: readonly DrawOp[]): string {
   const prefix = 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine ';
-  return `${prefix}function onDraw()${directBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L' })}end`;
+  return `${prefix}function onDraw()${emitDirectBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L' })}end`;
 }
 
 /** Minified direct emitter. The shortest semantically equivalent form wins. */
@@ -125,4 +125,48 @@ export function emitLua(ops: readonly DrawOp[], strategy: EmitStrategy): string 
 
 export function costOf(ops: readonly DrawOp[], strategy: EmitStrategy): number {
   return emitLua(ops, strategy).length;
+}
+
+const DIRECT_PREFIX = 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine ';
+
+function functionBody(lua: string): string {
+  const marker = 'function onDraw()';
+  const start = lua.indexOf(marker);
+  if (start < 0) return lua;
+  return lua.slice(start + marker.length, -3).trimEnd();
+}
+
+function animationTick(ticksPerFrame: number, frameCount: number): string {
+  return `local f=0 local t=0 function onTick()t=t+1 if t>=${ticksPerFrame} then t=0 f=f+1 if f>=${frameCount} then f=0 end end end `;
+}
+
+function animationBody(bodies: readonly string[], ticksPerFrame: number, prefix = ''): string {
+  const branches = bodies.map((body, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${body} `).join('');
+  return `${prefix}${animationTick(ticksPerFrame, bodies.length)}function onDraw()${branches}end end`;
+}
+
+function emitAnimationDirect(frameOps: readonly (readonly DrawOp[])[], ticksPerFrame: number): string {
+  const inlineBodies = frameOps.map((ops) => emitDirectBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' }));
+  const hoistedBodies = frameOps.map((ops) => emitDirectBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L' }));
+  const inline = animationBody(inlineBodies, ticksPerFrame);
+  const hoisted = animationBody(hoistedBodies, ticksPerFrame, DIRECT_PREFIX);
+  return hoisted.length < inline.length ? hoisted : inline;
+}
+
+/** Emit a tick-driven animation while reusing the three existing frame emitters. */
+export function emitAnimationLua(
+  frameOps: readonly (readonly DrawOp[])[],
+  strategy: EmitStrategy,
+  ticksPerFrame = 6,
+  keyframeDiff = false,
+): string {
+  if (frameOps.length === 0) return animationBody([''], ticksPerFrame);
+  if (strategy === 'direct') return emitAnimationDirect(frameOps, ticksPerFrame);
+  const bodies = frameOps.map((ops, index) => {
+    // Packed pixels have no transparent value. A sparse diff therefore uses
+    // the table emitter, which preserves the unchanged pixels on screen.
+    const frameStrategy = keyframeDiff && index > 0 && strategy === 'packed' ? 'table' : strategy;
+    return functionBody(emitLua(ops, frameStrategy));
+  });
+  return animationBody(bodies, ticksPerFrame);
 }

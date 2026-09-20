@@ -29,6 +29,10 @@ export interface ConvertStats {
   readonly setColourCalls: number;
   readonly rects: number;
   readonly elapsedMs: number;
+  readonly frameCount?: number;
+  readonly frameOps?: readonly number[];
+  readonly encoding?: 'full' | 'keyframe-diff';
+  readonly fullFrameChars?: number;
 }
 
 export interface ConvertResult {

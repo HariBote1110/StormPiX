@@ -1,5 +1,6 @@
 import {
   convert,
+  convertFrames,
   costOf,
   cover,
   coverScanline,
@@ -89,6 +90,42 @@ function fixtures(): readonly [string, Bitmap][] {
   ];
 }
 
+function animationFixtures(): readonly [string, readonly Bitmap[]][] {
+  const slide: Bitmap[] = [];
+  for (let frame = 0; frame < 8; frame += 1) {
+    slide.push(bitmapFromPixels(32, 32, (x, y) => {
+      if (x >= 3 + frame * 3 && x < 8 + frame * 3 && y >= 13 && y < 19) return [235, 190, 55];
+      return [18, 24, 36];
+    }));
+  }
+
+  const fade: Bitmap[] = [];
+  for (let frame = 0; frame < 8; frame += 1) {
+    const amount = frame / 7;
+    fade.push(bitmapFromPixels(32, 32, () => [
+      Math.round(20 + (230 - 20) * amount),
+      Math.round(45 + (180 - 45) * amount),
+      Math.round(100 + (55 - 100) * amount),
+    ]));
+  }
+
+  const spin: Bitmap[] = [];
+  for (let frame = 0; frame < 16; frame += 1) {
+    const angle = frame * Math.PI / 8;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    spin.push(bitmapFromPixels(64, 64, (x, y) => {
+      const centredX = x - 31.5;
+      const centredY = y - 31.5;
+      const localX = centredX * cosine + centredY * sine;
+      const localY = -centredX * sine + centredY * cosine;
+      if (Math.abs(localX) < 13 && Math.abs(localY) < 4) return [220, 80, 45];
+      return [14, 20, 30];
+    }));
+  }
+  return [['slide-8', slide], ['fade-8', fade], ['spin-16', spin]];
+}
+
 console.log('image\tnaiveChars\tconvertChars\twithinBudget\tstrategy\tssim\tpsnr\telapsedMs\tcoverScanline\tcoverOptimised');
 for (const [name, source] of fixtures()) {
   const naive = baselineOps(source);
@@ -102,4 +139,15 @@ for (const [name, source] of fixtures()) {
   void render(naive, source.width, source.height);
   void ssim(source, result.rendered);
   void psnr(source, result.rendered);
+}
+
+console.log('\nANIMATION');
+console.log('animation\tframeCount\tnaiveChars\tcharCount\twithinBudget\tstrategy\tmeanSsim\tfullFrameChars\tsaving\telapsedMs');
+for (const [name, frames] of animationFixtures()) {
+  const naiveStarted = performance.now();
+  const naiveChars = frames.reduce((sum, frame) => sum + convert(frame, { budget: BUDGET, seed: 0, timeBudgetMs: 5000 }).charCount, 0);
+  void (performance.now() - naiveStarted);
+  const result = convertFrames(frames, { budget: BUDGET, seed: 0, timeBudgetMs: 5000, ticksPerFrame: 6 });
+  const saving = naiveChars === 0 ? 0 : 1 - result.charCount / naiveChars;
+  console.log(`${name}\t${frames.length}\t${naiveChars}\t${result.charCount}\t${result.withinBudget}\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.fullFrameChars ?? '-'}\t${saving.toFixed(3)}\t${result.stats.elapsedMs.toFixed(2)}`);
 }
