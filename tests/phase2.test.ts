@@ -158,6 +158,19 @@ describe('convert', () => {
     expect(larger.metrics.ssim).toBeGreaterThan(medium.metrics.ssim);
   });
 
+  it('keeps quality monotonic across packed strategy boundaries', () => {
+    const source = photoLike();
+    const budgets = [4500, 5000, 5500, 6000, 6500, 7000];
+    const results = budgets.map((budget) => convert(source, { budget, seed: 0, timeBudgetMs: 1200 }));
+
+    for (let index = 1; index < results.length; index += 1) {
+      const previous = results[index - 1] as ReturnType<typeof convert>;
+      const current = results[index] as ReturnType<typeof convert>;
+      expect(current.metrics.ssim).toBeGreaterThanOrEqual(previous.metrics.ssim - 0.0005);
+      expect(current.stats.elapsedMs).toBeLessThanOrEqual(1200);
+    }
+  }, 15000);
+
   it('emits the best fitting partial programme at a tiny budget', () => {
     const result = convert(photoLike(), { budget: 60, seed: 0, timeBudgetMs: 5000 });
 
