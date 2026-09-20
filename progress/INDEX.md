@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `repeated-pattern-dictionary.md` — 実資産の列反復を縦ラン辞書で共有し、losslessアニメーションを単一スクリプト化
 - `fit-lossless-dominance.md` — fitが予算内のlossless単一スクリプト候補を優先する決定
 - `phase5-lossless-scripts.md` — lossless既定、可逆スクリプト分割、矩形ストリーム圧縮、kamishibai比較
 - `deterministic-work-budget.md` — 探索の壁時計依存を仕事量上限へ置換し、負荷下の決定性を回復

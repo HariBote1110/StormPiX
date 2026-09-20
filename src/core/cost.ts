@@ -355,3 +355,78 @@ export function emitAnimationLuaCompactRectangles(
   const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then${value === '' ? '' : `D("${value}")`}`).join('');
   return `${prefix}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${branches}end end`;
 }
+
+const COLUMN_DICTIONARY_HIGH_ALPHABET = '!#$%&()*,-.:;<=>?@[]^_`{|}~';
+
+function encodeColumnPattern(values: readonly number[], colourCount: number): string {
+  let result = '';
+  let colour = values[0] ?? 0;
+  let height = 0;
+  const flush = (): void => {
+    const value = colour * 32 + height - 1;
+    result += COMPACT_RECT_ALPHABET[Math.floor(value / 64)] ?? '0';
+    result += COMPACT_RECT_ALPHABET[value % 64] ?? '0';
+  };
+  for (const value of values) {
+    if (value === colour && height < 32) {
+      height += 1;
+      continue;
+    }
+    if (height > 0) flush();
+    colour = value;
+    height = 1;
+  }
+  if (height > 0) flush();
+  return colourCount <= 12 ? result : '';
+}
+
+function columnReference(index: number): string {
+  if (index < COMPACT_RECT_ALPHABET.length) return COMPACT_RECT_ALPHABET[index] as string;
+  const high = index - COMPACT_RECT_ALPHABET.length;
+  const prefix = COLUMN_DICTIONARY_HIGH_ALPHABET[Math.floor(high / COMPACT_RECT_ALPHABET.length)];
+  const suffix = COMPACT_RECT_ALPHABET[high % COMPACT_RECT_ALPHABET.length];
+  return prefix && suffix ? `${prefix}${suffix}` : '';
+}
+
+/** Encode repeated animation columns as a shared vertical-run dictionary. */
+export function emitAnimationLuaColumnDictionary(
+  frameIndices: readonly Uint16Array[],
+  width: number,
+  height: number,
+  colours: readonly string[],
+  ticksPerFrame = 6,
+): string {
+  if (frameIndices.length === 0 || width <= 0 || height <= 0 || colours.length > 12) return '';
+  const frameKeys: string[][] = [];
+  const frequencies = new Map<string, number>();
+  for (const indices of frameIndices) {
+    const keys: string[] = [];
+    for (let x = 0; x < width; x += 1) {
+      const values: number[] = [];
+      for (let y = 0; y < height; y += 1) values.push(indices[y * width + x] ?? 0);
+      const key = values.join(',');
+      keys.push(key);
+      frequencies.set(key, (frequencies.get(key) ?? 0) + 1);
+    }
+    frameKeys.push(keys);
+  }
+  const orderedKeys = [...frequencies.keys()].sort((left, right) => {
+    const frequencyDifference = (frequencies.get(right) ?? 0) - (frequencies.get(left) ?? 0);
+    return frequencyDifference !== 0 ? frequencyDifference : left.localeCompare(right);
+  });
+  const indexes = new Map(orderedKeys.map((key, index) => [key, index] as const));
+  const patterns = orderedKeys.map((key) => encodeColumnPattern(key.split(',').map(Number), colours.length));
+  if (patterns.some((pattern) => pattern === '') || orderedKeys.some((_, index) => columnReference(index) === '')) return '';
+  const data = frameKeys.map((keys) => keys.map((key) => columnReference(indexes.get(key) as number)).join(''));
+  const greyscale = colours.every((value) => {
+    const channels = value.split(',');
+    return channels[0] === channels[1] && channels[1] === channels[2];
+  });
+  const palette = greyscale
+    ? `p={${colours.map((colour) => colour.split(',')[0]).join(',')}`
+    : `p={${colours.map((colour) => `{${colour}}`).join(',')}`;
+  const colour = greyscale ? 'S.setColor(e,e,e)' : 'S.setColor(e[1],e[2],e[3])';
+  const prefix = `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" ${palette}} q={${patterns.map((pattern) => `"${pattern}"`).join(',')} }F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=string.sub(d,i,i)local n=string.find(A,z,1,true)if n then n=n-1 else local h=string.find(H,z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+string.find(A,string.sub(d,i+1,i+1),1,true)-1 i=i+1 end local s=q[n+1]local j=1 local y=0 while j<=#s do local v=(string.find(A,string.sub(s,j,j),1,true)-1)*64+string.find(A,string.sub(s,j+1,j+1),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+2 end x=x+1 i=i+1 end end `;
+  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then D("${value}")`).join('');
+  return `${prefix}${compactAnimationTick(ticksPerFrame, frameIndices.length)}function onDraw()${branches}end end`;
+}

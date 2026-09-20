@@ -1,5 +1,5 @@
 import { cover, type LabelImage } from './cover.ts';
-import { emitAnimationLua, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitLua } from './cost.ts';
+import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitLua } from './cost.ts';
 import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
@@ -12,8 +12,6 @@ const DEFAULT_WORK_BUDGET = 60;
 const DEFAULT_ANIMATION_WORK_BUDGET = 40;
 const HIGH_BUDGET_WORK_CAP = 12;
 const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
-const losslessImageCache = new WeakMap<object, Map<string, ConvertResult>>();
-const losslessAnimationCache = new WeakMap<object, Map<string, ConvertResult>>();
 
 interface WorkControl {
   readonly take: () => boolean;
@@ -286,20 +284,6 @@ function convertLossless(source: Bitmap, options: ConvertOptions, started: numbe
   return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started);
 }
 
-function cachedConvertLossless(source: Bitmap, options: ConvertOptions, started: number): ConvertResult {
-  const key = strategyCacheKey(options);
-  let entries = losslessImageCache.get(source);
-  if (!entries) {
-    entries = new Map<string, ConvertResult>();
-    losslessImageCache.set(source, entries);
-  }
-  const cached = entries.get(key);
-  if (cached) return cached;
-  const result = convertLossless(source, options, started);
-  entries.set(key, result);
-  return result;
-}
-
 function losslessSingleScriptForFit(result: ConvertResult, budget: number, started: number): ConvertResult | undefined {
   if (result.scripts.length !== 1 || result.lua.length > budget) return undefined;
   return {
@@ -315,10 +299,6 @@ function losslessOptions(options: ConvertOptions, budget: number): ConvertOption
 
 function canUseLosslessFitCandidate(options: ConvertOptions): boolean {
   return options.maxColours === undefined && options.dither === undefined;
-}
-
-function strategyCacheKey(options: ConvertOptions): string {
-  return options.strategies?.join(',') ?? ALL_STRATEGIES.join(',');
 }
 
 function maxColoursSequence(maxColours: number): number[] {
@@ -464,6 +444,9 @@ interface LosslessAnimationScripts {
 function losslessAnimationSegment(
   fullOps: readonly (readonly DrawOp[])[],
   diffOps: readonly (readonly DrawOp[])[],
+  frameIndices: readonly Uint16Array[],
+  width: number,
+  height: number,
   start: number,
   end: number,
   ticksPerFrame: number,
@@ -474,12 +457,13 @@ function losslessAnimationSegment(
   const fullCandidates = [
     emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame),
     emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame),
+    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame),
   ];
   const diffCandidates = [
     emitAnimationLuaCompact(diffOpsForSegment, ticksPerFrame),
     emitAnimationLuaCompactRectangles(diffOpsForSegment, colours, ticksPerFrame),
   ];
-  const full = fullCandidates.sort((left, right) => left.length - right.length)[0] as string;
+  const full = fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string;
   const diff = diffCandidates.sort((left, right) => left.length - right.length)[0] as string;
   return diff.length < full.length ? { lua: diff, encoding: 'keyframe-diff' } : { lua: full, encoding: 'full' };
 }
@@ -487,6 +471,9 @@ function losslessAnimationSegment(
 function splitLosslessAnimation(
   fullOps: readonly (readonly DrawOp[])[],
   diffOps: readonly (readonly DrawOp[])[],
+  frameIndices: readonly Uint16Array[],
+  width: number,
+  height: number,
   budget: number,
   ticksPerFrame: number,
   colours: readonly string[],
@@ -497,7 +484,7 @@ function splitLosslessAnimation(
     const key = `${start}:${end}`;
     const cached = cache.get(key);
     if (cached) return cached;
-    const result = losslessAnimationSegment(fullOps, diffOps, start, end, ticksPerFrame, colours);
+    const result = losslessAnimationSegment(fullOps, diffOps, frameIndices, width, height, start, end, ticksPerFrame, colours);
     cache.set(key, result);
     return result;
   };
@@ -565,7 +552,7 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
   if (canUseLosslessFitCandidate(options)) {
-    const lossless = cachedConvertLossless(source, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
+    const lossless = convertLossless(source, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
     const losslessFit = losslessSingleScriptForFit(lossless, budget, started);
     if (losslessFit) return losslessFit;
   }
@@ -651,7 +638,7 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
   const exact = exactLabelsFrames(frames);
   const prepared = prepareAnimation(frames, exact.palette, exact.indices);
   const colours = exact.palette.map((colour) => colour.join(','));
-  const split = splitLosslessAnimation(prepared.fullOps, prepared.diffOps, budget, ticksPerFrame, colours);
+  const split = splitLosslessAnimation(prepared.fullOps, prepared.diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, colours);
   const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(prepared.fullOps, ticksPerFrame)];
   const lua = scripts[0] as string;
   const allOps = prepared.fullOps.flat();
@@ -681,17 +668,7 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
 }
 
 function convertFramesFitWithLosslessFallback(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number }, budget: number, started: number): ConvertResult | undefined {
-  const key = `${options.ticksPerFrame ?? 6}:${strategyCacheKey(options)}`;
-  let entries = losslessAnimationCache.get(frames);
-  if (!entries) {
-    entries = new Map<string, ConvertResult>();
-    losslessAnimationCache.set(frames, entries);
-  }
-  let lossless = entries.get(key);
-  if (!lossless) {
-    lossless = convertFramesLossless(frames, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
-    entries.set(key, lossless);
-  }
+  const lossless = convertFramesLossless(frames, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
   return losslessSingleScriptForFit(lossless, budget, started);
 }
 
