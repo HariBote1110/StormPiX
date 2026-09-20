@@ -14,6 +14,7 @@ import {
 } from '../src/core/index.ts';
 
 const BUDGET = 8192;
+const BUDGET_SWEEP = [60, 100, 200, 300, 500, 1000, 2000, 4000, 8192] as const;
 
 function bitmapFromPixels(width: number, height: number, colourAt: (x: number, y: number) => Rgb): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -55,23 +56,13 @@ function baselineOps(source: Bitmap): DrawOp[] {
 
 function photoLike(): Bitmap {
   return bitmapFromPixels(96, 96, (x, y) => {
-    const wave = Math.sin(x / 13) * 10 + Math.cos(y / 17) * 9;
-    const diagonal = (x + y) * 0.72;
-    let r = 45 + diagonal + wave;
-    let g = 70 + y * 0.85 - wave * 0.35;
-    let b = 115 + x * 0.45 + wave * 0.8;
-    if ((x - 27) ** 2 + (y - 34) ** 2 < 17 ** 2) {
-      r = 210 + wave;
-      g = 90 + wave * 0.25;
-      b = 55;
-    }
-    if (x > 57 && x < 84 && y > 53 && y < 82 && (x + y) % 5 < 3) {
-      r = 45;
-      g = 165 + wave;
-      b = 92;
-    }
-    const noise = ((x * 17 + y * 31 + x * y * 7) % 11) - 5;
-    return [Math.max(0, Math.min(255, Math.round(r + noise))), Math.max(0, Math.min(255, Math.round(g + noise))), Math.max(0, Math.min(255, Math.round(b + noise)))];
+    const gradient = (x + y) / 190;
+    let r = Math.round(40 + 215 * gradient);
+    let g = Math.round(90 + 160 * gradient);
+    let b = Math.round(180 - 90 * gradient);
+    if ((x - 64) ** 2 + (y - 32) ** 2 <= 18 ** 2) [r, g, b] = [255, 255, 255];
+    if (x >= 8 && x < 48 && y >= 70 && y < 88) [r, g, b] = [15, 15, 15];
+    return [r, g, b];
   });
 }
 
@@ -139,6 +130,16 @@ for (const [name, source] of fixtures()) {
   void render(naive, source.width, source.height);
   void ssim(source, result.rendered);
   void psnr(source, result.rendered);
+}
+
+const photo = fixtures().find(([name]) => name === 'photo-96')?.[1];
+if (photo) {
+  console.log('\nBUDGET SWEEP (photo-96)');
+  console.log('budget\tcharCount\tutilisation\tstrategy\tssim\telapsedMs');
+  for (const budget of BUDGET_SWEEP) {
+    const result = convert(photo, { budget, seed: 0, timeBudgetMs: 5000 });
+    console.log(`${budget}\t${result.charCount}\t${((result.charCount / budget) * 100).toFixed(1)}%\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.elapsedMs.toFixed(2)}`);
+  }
 }
 
 console.log('\nANIMATION');

@@ -97,6 +97,64 @@ function nearestIndex(r: number, g: number, b: number, paletteLab: readonly (rea
   return best;
 }
 
+function luma(r: number, g: number, b: number): number {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function nearestLumaIndex(r: number, g: number, b: number, palette: readonly Rgb[]): number {
+  const target = luma(r, g, b);
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < palette.length; index += 1) {
+    const colour = palette[index] ?? [0, 0, 0];
+    const distance = (target - luma(colour[0], colour[1], colour[2])) ** 2;
+    if (distance < bestDistance) {
+      best = index;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+function quantiseLuma(source: Bitmap, maxColours: number): QuantisedImage {
+  const colourCount = Math.max(1, Math.floor(maxColours));
+  const base = quantise(source, colourCount);
+  let palette = base.palette.map((colour) => [...colour] as Rgb);
+  const pixels = source.width * source.height;
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const sums = palette.map(() => [0, 0, 0, 0]);
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+      const offset = pixel * 4;
+      const index = nearestLumaIndex(source.data[offset] ?? 0, source.data[offset + 1] ?? 0, source.data[offset + 2] ?? 0, palette);
+      const sum = sums[index] ?? [0, 0, 0, 0];
+      sum[0] = (sum[0] ?? 0) + (source.data[offset] ?? 0);
+      sum[1] = (sum[1] ?? 0) + (source.data[offset + 1] ?? 0);
+      sum[2] = (sum[2] ?? 0) + (source.data[offset + 2] ?? 0);
+      sum[3] = (sum[3] ?? 0) + 1;
+      sums[index] = sum;
+    }
+    const next = palette.map((colour, index) => {
+      const sum = sums[index] ?? [0, 0, 0, 0];
+      const count = sum[3] ?? 0;
+      return count === 0 ? colour : [Math.round((sum[0] ?? 0) / count), Math.round((sum[1] ?? 0) / count), Math.round((sum[2] ?? 0) / count)] as Rgb;
+    });
+    if (next.every((colour, index) => colour[0] === palette[index]?.[0] && colour[1] === palette[index]?.[1] && colour[2] === palette[index]?.[2])) break;
+    palette = next;
+  }
+  const indices = new Uint16Array(pixels);
+  for (let pixel = 0; pixel < pixels; pixel += 1) {
+    const offset = pixel * 4;
+    indices[pixel] = nearestLumaIndex(source.data[offset] ?? 0, source.data[offset + 1] ?? 0, source.data[offset + 2] ?? 0, palette);
+  }
+  return { palette, indices };
+}
+
+/** Conversion-only palette reduction tuned to the luma-based SSIM objective. */
+export function quantiseForQuality(source: Bitmap, maxColours = 16, options: QuantiseOptions = {}): QuantisedImage {
+  if (options.dither === 'floyd-steinberg') return quantise(source, maxColours, options);
+  return quantiseLuma(source, maxColours);
+}
+
 /** Deterministic weighted median-cut palette reduction with optional error diffusion. */
 export function quantise(source: Bitmap, maxColours = 16, options: QuantiseOptions = {}): QuantisedImage {
   const colourCount = Math.max(1, Math.floor(maxColours));

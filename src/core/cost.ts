@@ -53,6 +53,61 @@ function isRectProgram(ops: readonly DrawOp[]): boolean {
 
 const BASE64_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/';
 
+function gammaBits(value: number): number[] {
+  const binary = (value + 1).toString(2);
+  const bits = Array.from({ length: binary.length - 1 }, () => 0);
+  for (const character of binary) bits.push(character === '1' ? 1 : 0);
+  return bits;
+}
+
+function appendBits(target: number[], value: number, width: number): void {
+  for (let bit = width - 1; bit >= 0; bit -= 1) target.push((value >> bit) & 1);
+}
+
+function encodeDeltaPixels(pixels: readonly number[], width: number, height: number, colourCount: number): string {
+  const bits: number[] = [];
+  const firstWidth = Math.max(1, Math.ceil(Math.log2(colourCount)));
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * width;
+    if (y === 0) appendBits(bits, pixels[rowStart] ?? 0, firstWidth);
+    else {
+      let delta = (pixels[rowStart] ?? 0) - (pixels[rowStart - width] ?? 0);
+      if (delta > colourCount / 2) delta -= colourCount;
+      if (delta <= -colourCount / 2) delta += colourCount;
+      const zigzag = delta > 0 ? delta * 2 - 1 : -delta * 2;
+      bits.push(...gammaBits(zigzag));
+    }
+    for (let x = 1; x < width; x += 1) {
+      const current = pixels[rowStart + x] ?? 0;
+      const previous = pixels[rowStart + x - 1] ?? 0;
+      let delta = current - previous;
+      if (delta > colourCount / 2) delta -= colourCount;
+      if (delta <= -colourCount / 2) delta += colourCount;
+      const zigzag = delta > 0 ? delta * 2 - 1 : -delta * 2;
+      bits.push(...gammaBits(zigzag));
+    }
+  }
+  let result = '';
+  for (let index = 0; index < bits.length; index += 6) {
+    let value = 0;
+    for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
+    result += BASE64_ALPHABET[value] ?? '0';
+  }
+  return result;
+}
+
+function deltaPackedDecoder(width: number, height: number, colourCount: number, data: string, palette: string): string {
+  const firstWidth = Math.max(1, Math.ceil(Math.log2(colourCount)));
+  return `function onDraw()local a="${BASE64_ALPHABET}"local d="${data}"local p={${palette}}local k=1 local j=5 local q=0 local function b()if j==5 then q=string.find(a,string.sub(d,k,k),1,true)-1 end local v=math.floor(q/2^j)%2 j=j-1 if j<0 then j=5 k=k+1 end return v end local function r(n)local v=0 for i=1,n do v=v*2+b()end return v end local function g()local z=0 while b()==0 do z=z+1 end local v=0 for i=0,z do v=v*2+b()end return v-1 end local c=0 local f=0 for y=0,${height - 1} do if y==0 then c=r(${firstWidth})else local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(f+q)%${colourCount} end f=c for x=0,${width - 1} do if x>0 then local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(c+q)%${colourCount} end local e=p[c+1]screen.setColor(e[1],e[2],e[3])screen.drawRectF(x,y,1,1)end end end`;
+}
+
+function emitDeltaPacked(width: number, height: number, colours: readonly string[], pixels: readonly number[]): string {
+  if (colours.length < 2 || colours.length > 16) return '';
+  const palette = colours.map((colour) => colour.split(',').map((value) => Number(value))).map((colour) => `{${colour.join(',')}}`).join(',');
+  const data = encodeDeltaPixels(pixels, width, height, colours.length);
+  return deltaPackedDecoder(width, height, colours.length, data, palette);
+}
+
 function emitTable(ops: readonly DrawOp[]): string {
   if (!isRectProgram(ops)) return emitDirect(ops);
   let colour: Extract<DrawOp, { type: 'setColour' }> | undefined;
@@ -90,6 +145,7 @@ function emitPacked(ops: readonly DrawOp[]): string {
     }
     pixels.push(index);
   }
+  const deltaPacked = emitDeltaPacked(width, height, colours, pixels);
   // Decimal glyphs keep the decoder tiny. For small images, raw RGB nibbles
   // are still cheaper than a very large per-pixel table and retain the source
   // gradient exactly.
@@ -105,7 +161,8 @@ function emitPacked(ops: readonly DrawOp[]): string {
   const palette = colours.map((colour) => `{${colour}}`).join(',');
   if (colours.length <= 10) {
     const data = pixels.join('');
-    return `function onDraw()local p={${palette}}local d="${data}"for i=1,#d do local c=p[string.byte(d,i)-47]local z=i-1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)end end`;
+    const legacy = `function onDraw()local p={${palette}}local d="${data}"for i=1,#d do local c=p[string.byte(d,i)-47]local z=i-1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)end end`;
+    return deltaPacked && deltaPacked.length < legacy.length ? deltaPacked : legacy;
   }
   let data = '';
   for (let pixel = 0; pixel < pixels.length; pixel += 4) {
@@ -114,7 +171,8 @@ function emitPacked(ops: readonly DrawOp[]): string {
     data += BASE64_ALPHABET[Math.floor(value / 64) % 64] ?? '0';
     data += BASE64_ALPHABET[value % 64] ?? '0';
   }
-  return `function onDraw()local a="${BASE64_ALPHABET}"local p={${palette}}local d="${data}"local i=0 local t=${pixels.length} for k=1,#d,3 do local v=(string.find(a,string.sub(d,k,k),1,true)-1)*4096+(string.find(a,string.sub(d,k+1,k+1),1,true)-1)*64+string.find(a,string.sub(d,k+2,k+2),1,true)-1 for j=1,4 do if i<t then local n=math.floor(v/4096)local c=p[n+1]local z=i i=i+1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)v=(v-n*4096)*16 end end end end`;
+  const legacy = `function onDraw()local a="${BASE64_ALPHABET}"local p={${palette}}local d="${data}"local i=0 local t=${pixels.length} for k=1,#d,3 do local v=(string.find(a,string.sub(d,k,k),1,true)-1)*4096+(string.find(a,string.sub(d,k+1,k+1),1,true)-1)*64+string.find(a,string.sub(d,k+2,k+2),1,true)-1 for j=1,4 do if i<t then local n=math.floor(v/4096)local c=p[n+1]local z=i i=i+1 screen.setColor(c[1],c[2],c[3])screen.drawRectF(z%${width},math.floor(z/${width}),1,1)v=(v-n*4096)*16 end end end end`;
+  return deltaPacked && deltaPacked.length < legacy.length ? deltaPacked : legacy;
 }
 
 export function emitLua(ops: readonly DrawOp[], strategy: EmitStrategy): string {

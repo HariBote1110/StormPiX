@@ -23,6 +23,26 @@ function solid(width: number, height: number, r: number, g: number, b: number): 
   return { width, height, data };
 }
 
+function photoLike(): Bitmap {
+  const width = 96;
+  const height = 96;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const gradient = (x + y) / 190;
+    let r = Math.round(40 + 215 * gradient);
+    let g = Math.round(90 + 160 * gradient);
+    let b = Math.round(180 - 90 * gradient);
+    if ((x - 64) ** 2 + (y - 32) ** 2 <= 18 ** 2) [r, g, b] = [255, 255, 255];
+    if (x >= 8 && x < 48 && y >= 70 && y < 88) [r, g, b] = [15, 15, 15];
+    const offset = (y * width + x) * 4;
+    data[offset] = r;
+    data[offset + 1] = g;
+    data[offset + 2] = b;
+    data[offset + 3] = 255;
+  }
+  return { width, height, data };
+}
+
 const ops: DrawOp[] = [
   { type: 'setColour', r: 20, g: 30, b: 40 },
   { type: 'rectF', x: 0, y: 0, w: 4, h: 3 },
@@ -91,5 +111,35 @@ describe('convert', () => {
     const constrained = convert(source, { budget: 120, seed: 3 });
     expect(constrained.charCount).toBeLessThanOrEqual(generous.charCount);
     expect(constrained.metrics.ssim).toBeLessThanOrEqual(generous.metrics.ssim + 1e-12);
+  });
+
+  it('uses the budget or reaches visually exact quality across the photo budget sweep', () => {
+    const source = photoLike();
+    const budgets = [60, 100, 200, 300, 500, 1000, 2000, 4000, 8192];
+    const results = budgets.map((budget) => convert(source, { budget, seed: 0, timeBudgetMs: 5000 }));
+
+    for (const [index, result] of results.entries()) {
+      const budget = budgets[index] as number;
+      expect(result.charCount / budget >= 0.85 || result.metrics.ssim >= 0.999).toBe(true);
+      expect(result.charCount).toBeLessThanOrEqual(budget);
+      expect(result.stats.elapsedMs).toBeLessThanOrEqual(5000);
+    }
+  }, 60000);
+
+  it('makes a strict quality gain at the required doubled budgets', () => {
+    const source = photoLike();
+    const results = new Map([100, 200, 500, 1000, 2000, 4000].map((budget) => [budget, convert(source, { budget, seed: 0, timeBudgetMs: 5000 })]));
+
+    expect(results.get(200)?.metrics.ssim).toBeGreaterThan(results.get(100)?.metrics.ssim ?? 0);
+    expect(results.get(1000)?.metrics.ssim).toBeGreaterThan(results.get(500)?.metrics.ssim ?? 0);
+    expect(results.get(4000)?.metrics.ssim).toBeGreaterThan(results.get(2000)?.metrics.ssim ?? 0);
+  }, 60000);
+
+  it('emits the best fitting partial programme at a tiny budget', () => {
+    const result = convert(photoLike(), { budget: 60, seed: 0, timeBudgetMs: 5000 });
+
+    expect(result.charCount).toBeGreaterThan(20);
+    expect(result.charCount).toBeLessThanOrEqual(60);
+    expect(result.metrics.ssim).toBeGreaterThanOrEqual(0.5);
   });
 });
