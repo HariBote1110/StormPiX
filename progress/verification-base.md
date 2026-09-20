@@ -8,7 +8,7 @@
 - `renderWithMask` は既存の `render` と同じ opaque rectangle 経路を維持しつつ、`certainty`/`mask` を追加する。整数軸平行矩形と塗りの厳密な内部を `CERTAIN=1`、線・三角形・円の境界帯を `UNCERTAIN=0` とする。`ssimMasked`/`psnrMasked` は uncertain pixel を除外し、既存の `ssim`/`psnr` は後方互換のまま残した。
 - alpha は premultiplied src-over で処理し、opaque (`a` 未指定または255) の既存 RGB 出力は変更しない。`DrawOp` には `triangle`/`triangleF`/`circle`/`circleF`/`text` と `setColour.a` を追加したが、オプティマイザと既存 emit 戦略は新 primitive を生成しない。
 - 円は Rust 参照の既定値 `16` を採用し、`CIRCLE_SEGMENT_TABLE` に集約した。開発者バグトラッカー #25012 の r=15 octagon 報告、radius-tiered 8/12/16 実装、Rust の16分割が矛盾するため、結論は出さず編集可能な証拠点として残した。
-- 指定された参照元 `/Users/yuki/storm-lua-runner/rust/lua-runtime-core/src/screen_raster.rs` はこの環境に存在せず、読み取り専用制約のため推測で補完せず、依頼文で指定された floor/DDA、scanline、16角形、glyph、premultiplied blend の契約だけを実装した。
+- 指定された参照元は依頼文の直下パスには存在しなかったが、同一 owner repo の `/Users/yuki/GitHub/storm-lua-runner/rust/lua-runtime-core/src/screen_raster.rs` を読み取り専用で確認できたため、floor/DDA、scanline、16角形、glyph、premultiplied blend をその意味論へ合わせた。
 - `pnpm bench` の最後に `/Users/yuki/doc/al/pngX` を直接読み、4/8/16/24/40 frame subset の lossless character count と budget 8192 の one-script 結果を表示する。PNG は比較ベンチの `readPng` を再利用し、資産不在時は skip する。
 
 ## Alternatives considered
@@ -24,3 +24,4 @@
 - 既存ベンチの character count は、矩形のみの `render` opaque path、emitter 文字列、metrics の unmasked path を変更しないことで固定する。
 - 2026-09-21 の既存値は flat-32 74、gradient-32 6372、quadrants-96 214、checker-32 1222、photo-96 7626、budget sweep 60→47/100→75/200→128/300→128/500→128/1000→966/2000→1837/4000→3861/8192→7626。今回の実行でも一致した。
 - 実アセットの追加表は `4→lossless 723 / 8192 723 (SSIM 1.000000)`、`8→1497 / 1497 (1.000000)`、`16→7165 / 7165 (1.000000)`、`24→12426 / 8172 (0.945913)`、`40→23970 / 7709 (0.402426)` だった。
+- glyph の 95 件は参照 Rust の `TINY_FONT` と機械比較し、ASCII 0x20..0x7E の全行が一致した。
