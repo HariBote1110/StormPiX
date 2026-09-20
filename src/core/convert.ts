@@ -298,7 +298,8 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
       if (performance.now() >= deadline) break;
       const quantised = quantiseForQuality(source, colourCount, { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
       lastPalette = quantised.palette;
-      for (const blockSize of blockSizes(source)) {
+      const sizes = colourCount > 32 ? [1] : blockSizes(source);
+      for (const blockSize of sizes) {
         if (performance.now() >= deadline) break outer;
         const indices = blockSize === 1 ? quantised.indices : blockify(source, quantised.palette, blockSize);
         const candidate = makeCandidate(source, quantised.palette, indices, strategies, budget);
