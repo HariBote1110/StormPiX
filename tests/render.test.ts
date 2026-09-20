@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, type DrawOp } from '../src/core/index';
+import { render, renderWithMask, type DrawOp } from '../src/core/index';
 
 function pixel(bitmap: ReturnType<typeof render>, x: number, y: number): number[] {
   const offset = (y * bitmap.width + x) * 4;
@@ -50,5 +50,27 @@ describe('render', () => {
   it('starts with opaque black pixels', () => {
     const bitmap = render([], 2, 1);
     expect(Array.from(bitmap.data)).toEqual([0, 0, 0, 255, 0, 0, 0, 255]);
+  });
+
+  it('supports reference primitive semantics and reports edge certainty', () => {
+    const output = renderWithMask([
+      { type: 'setColour', r: 255, g: 0, b: 0 },
+      { type: 'triangle', x1: 1, y1: 1, x2: 6, y2: 1, x3: 3, y3: 6 },
+      { type: 'setColour', r: 0, g: 255, b: 0 },
+      { type: 'circle', x: 10, y: 5, radius: 3 },
+    ], 14, 10);
+
+    expect(output.bitmap.data.some((value) => value === 255)).toBe(true);
+    expect(output.certainty.length).toBe(14 * 10);
+    expect(Array.from(output.certainty).some((value) => value === 0)).toBe(true);
+    expect(Array.from(output.certainty).some((value) => value === 1)).toBe(true);
+  });
+
+  it('blends alpha in premultiplied form without changing opaque rectangles', () => {
+    const output = render([
+      { type: 'setColour', r: 255, g: 0, b: 0, a: 128 },
+      { type: 'rectF', x: 0, y: 0, w: 1, h: 1 },
+    ], 1, 1);
+    expect(Array.from(output.data)).toEqual([128, 0, 0, 255]);
   });
 });

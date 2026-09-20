@@ -5,3 +5,8 @@ declare module 'node:child_process' {
     options: { readonly input: string; readonly encoding: 'utf8' },
   ): { readonly error?: { readonly code?: string }; readonly status: number | null; readonly stderr: string; readonly stdout?: string };
 }
+
+declare module 'node:fs' {
+  export function writeFileSync(path: string, data: string, encoding: 'utf8'): void;
+  export function rmSync(path: string, options: { readonly force: boolean }): void;
+}

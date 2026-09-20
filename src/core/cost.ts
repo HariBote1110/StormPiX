@@ -12,13 +12,14 @@ function numberText(value: number): string {
   return Object.is(value, -0) ? '0' : String(value);
 }
 
-export function emitDirectBody(ops: readonly DrawOp[], names: { readonly colour: string; readonly rectF: string; readonly rect: string; readonly line: string }): string {
+export function emitDirectBody(ops: readonly DrawOp[], names: { readonly colour: string; readonly rectF: string; readonly rect: string; readonly line: string; readonly triangle?: string; readonly triangleF?: string; readonly circle?: string; readonly circleF?: string; readonly text?: string }): string {
   let currentColour: string | undefined;
   const statements: string[] = [];
   for (const op of ops) {
     switch (op.type) {
       case 'setColour': {
-        const statement = `${names.colour}(${numberText(op.r)},${numberText(op.g)},${numberText(op.b)})`;
+        const alpha = op.a === undefined ? '' : `,${numberText(op.a)}`;
+        const statement = `${names.colour}(${numberText(op.r)},${numberText(op.g)},${numberText(op.b)}${alpha})`;
         if (statement !== currentColour) statements.push(statement);
         currentColour = statement;
         break;
@@ -26,18 +27,24 @@ export function emitDirectBody(ops: readonly DrawOp[], names: { readonly colour:
       case 'rectF': statements.push(`${names.rectF}(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
       case 'rect': statements.push(`${names.rect}(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
       case 'line': statements.push(`${names.line}(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)})`); break;
+      case 'triangle': statements.push(`${names.triangle ?? 'screen.drawTriangle'}(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)},${numberText(op.x3)},${numberText(op.y3)})`); break;
+      case 'triangleF': statements.push(`${names.triangleF ?? 'screen.drawTriangleF'}(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)},${numberText(op.x3)},${numberText(op.y3)})`); break;
+      case 'circle': statements.push(`${names.circle ?? 'screen.drawCircle'}(${numberText(op.x)},${numberText(op.y)},${numberText(op.radius)})`); break;
+      case 'circleF': statements.push(`${names.circleF ?? 'screen.drawCircleF'}(${numberText(op.x)},${numberText(op.y)},${numberText(op.radius)})`); break;
+      case 'text': statements.push(`${names.text ?? 'screen.drawText'}(${numberText(op.x)},${numberText(op.y)},${JSON.stringify(op.text)})`); break;
     }
   }
   return statements.join('');
 }
 
 function directInline(ops: readonly DrawOp[]): string {
-  return `function onDraw()${emitDirectBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' })}end`;
+  return `function onDraw()${emitDirectBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine', triangle: 'screen.drawTriangle', triangleF: 'screen.drawTriangleF', circle: 'screen.drawCircle', circleF: 'screen.drawCircleF', text: 'screen.drawText' })}end`;
 }
 
 function directHoisted(ops: readonly DrawOp[]): string {
-  const prefix = 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine ';
-  return `${prefix}function onDraw()${emitDirectBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L' })}end`;
+  const extended = ops.some((op) => op.type === 'triangle' || op.type === 'triangleF' || op.type === 'circle' || op.type === 'circleF' || op.type === 'text' || (op.type === 'setColour' && op.a !== undefined));
+  const prefix = extended ? 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine local T=S.drawTriangle local U=S.drawTriangleF local O=S.drawCircle local P=S.drawCircleF local X=S.drawText ' : 'local S=screen local C=S.setColor local F=S.drawRectF local R=S.drawRect local L=S.drawLine ';
+  return `${prefix}function onDraw()${emitDirectBody(ops, { colour: 'C', rectF: 'F', rect: 'R', line: 'L', triangle: 'T', triangleF: 'U', circle: 'O', circleF: 'P', text: 'X' })}end`;
 }
 
 /** Minified direct emitter. The shortest semantically equivalent form wins. */

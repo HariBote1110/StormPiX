@@ -40,6 +40,11 @@ const WEIGHTS = gaussianWeights();
 
 /** Compute windowed Gaussian SSIM over Rec. 709 luma. */
 export function ssim(a: Bitmap, b: Bitmap): number {
+  return ssimMasked(a, b);
+}
+
+/** SSIM over certain pixels only; the unmasked path above remains compatible. */
+export function ssimMasked(a: Bitmap, b: Bitmap, certainty?: ArrayLike<number>): number {
   checkDimensions(a, b);
   if (sameData(a, b)) return 1;
   if (a.width === 0 || a.height === 0) return 1;
@@ -47,10 +52,11 @@ export function ssim(a: Bitmap, b: Bitmap): number {
   const c1 = (K1 * LUMA_MAX) ** 2;
   const c2 = (K2 * LUMA_MAX) ** 2;
   let total = 0;
-  const count = a.width * a.height;
+  let count = 0;
 
   for (let y = 0; y < a.height; y += 1) {
     for (let x = 0; x < a.width; x += 1) {
+      if (certainty && certainty[y * a.width + x] !== 1) continue;
       let weightSum = 0;
       let meanA = 0;
       let meanB = 0;
@@ -58,6 +64,7 @@ export function ssim(a: Bitmap, b: Bitmap): number {
         const sampleY = Math.min(a.height - 1, Math.max(0, y + dy));
         for (let dx = -WINDOW_RADIUS; dx <= WINDOW_RADIUS; dx += 1) {
           const sampleX = Math.min(a.width - 1, Math.max(0, x + dx));
+          if (certainty && certainty[sampleY * a.width + sampleX] !== 1) continue;
           const weight = WEIGHTS[dy + WINDOW_RADIUS]?.[dx + WINDOW_RADIUS] ?? 0;
           const offset = (sampleY * a.width + sampleX) * 4;
           meanA += weight * luma(a.data, offset);
@@ -75,6 +82,7 @@ export function ssim(a: Bitmap, b: Bitmap): number {
         const sampleY = Math.min(a.height - 1, Math.max(0, y + dy));
         for (let dx = -WINDOW_RADIUS; dx <= WINDOW_RADIUS; dx += 1) {
           const sampleX = Math.min(a.width - 1, Math.max(0, x + dx));
+          if (certainty && certainty[sampleY * a.width + sampleX] !== 1) continue;
           const weight = (WEIGHTS[dy + WINDOW_RADIUS]?.[dx + WINDOW_RADIUS] ?? 0) / weightSum;
           const offset = (sampleY * a.width + sampleX) * 4;
           const valueA = luma(a.data, offset) - meanA;
@@ -88,20 +96,27 @@ export function ssim(a: Bitmap, b: Bitmap): number {
       const numerator = (2 * meanA * meanB + c1) * (2 * covariance + c2);
       const denominator = (meanA * meanA + meanB * meanB + c1) * (varianceA + varianceB + c2);
       total += denominator === 0 ? 1 : numerator / denominator;
+      count += 1;
     }
   }
 
-  return Math.max(0, Math.min(1, total / count));
+  return count === 0 ? 1 : Math.max(0, Math.min(1, total / count));
 }
 
 /** Compute RGB peak signal-to-noise ratio in dB. */
 export function psnr(a: Bitmap, b: Bitmap): number {
+  return psnrMasked(a, b);
+}
+
+export function psnrMasked(a: Bitmap, b: Bitmap, certainty?: ArrayLike<number>): number {
   checkDimensions(a, b);
   if (a.width === 0 || a.height === 0) return Infinity;
 
   let squaredError = 0;
-  const channelCount = a.width * a.height * 3;
+  let pixelCount = 0;
   for (let pixel = 0; pixel < a.width * a.height; pixel += 1) {
+    if (certainty && certainty[pixel] !== 1) continue;
+    pixelCount += 1;
     const offset = pixel * 4;
     for (let channel = 0; channel < 3; channel += 1) {
       const difference = (a.data[offset + channel] ?? 0) - (b.data[offset + channel] ?? 0);
@@ -109,10 +124,14 @@ export function psnr(a: Bitmap, b: Bitmap): number {
     }
   }
 
-  const meanSquaredError = squaredError / channelCount;
+  if (pixelCount === 0) return Infinity;
+  const meanSquaredError = squaredError / (pixelCount * 3);
   if (meanSquaredError === 0) return Infinity;
   return 10 * Math.log10((LUMA_MAX * LUMA_MAX) / meanSquaredError);
 }
+
+export const ssimWithMask = ssimMasked;
+export const psnrWithMask = psnrMasked;
 
 export function rmse(a: Bitmap, b: Bitmap): number {
   checkDimensions(a, b);

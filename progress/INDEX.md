@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `verification-base.md` — Lua往復検証、参照ラスタライズ意味論、確実性マスク、実アセット回帰の検証基盤
 - `compare-kamishibai.md` — 実資産による storm-kamishibai 比較、gamma 差、lossless 再構成欠陥の実測
 - `phase4-budget.md` — 予算最適化、品質単調性、輝度パレット、高色数差分packedの設計判断
 - `phase3-animation.md` — 共有パレット、フレーム間差分、tick 再生の設計判断

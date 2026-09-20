@@ -1,3 +1,5 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { readPng } from './compare/png.ts';
 import {
   convert,
   convertFrames,
@@ -12,6 +14,8 @@ import {
   type DrawOp,
   type Rgb,
 } from '../src/core/index.ts';
+
+const REAL_ASSET_PATH = '/Users/yuki/doc/al/pngX';
 
 const BUDGET = 8192;
 const BUDGET_SWEEP = [60, 100, 200, 300, 500, 1000, 2000, 4000, 8192] as const;
@@ -192,4 +196,20 @@ for (const [name, frames] of animationFixtures()) {
   const result = convertFrames(frames, { budget: BUDGET, seed: 0, timeBudgetMs: 5000, ticksPerFrame: 6 });
   const saving = naiveChars === 0 ? 0 : 1 - result.charCount / naiveChars;
   console.log(`${name}\t${frames.length}\t${naiveChars}\t${result.charCount}\t${result.withinBudget}\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.fullFrameChars ?? '-'}\t${saving.toFixed(3)}\t${result.stats.elapsedMs.toFixed(2)}`);
+}
+
+if (!existsSync(REAL_ASSET_PATH)) {
+  console.log(`\nREAL ASSET: SKIP: asset path is absent: ${REAL_ASSET_PATH}`);
+} else {
+  const names = readdirSync(REAL_ASSET_PATH).filter((name) => /^\d{3}\.png$/.test(name)).sort();
+  if (names.length !== 40) throw new Error(`expected 40 PNG frames in ${REAL_ASSET_PATH}, found ${names.length}`);
+  const realFrames = names.map((name) => readPng(`${REAL_ASSET_PATH}/${name}`));
+  console.log('\nREAL ASSET (/Users/yuki/doc/al/pngX)');
+  console.log('frames\tlosslessChars\tone8192Chars\tone8192Ssim\tstrategy');
+  for (const frameCount of [4, 8, 16, 24, 40] as const) {
+    const subset = realFrames.slice(0, frameCount);
+    const lossless = convertFrames(subset, { budget: Number.MAX_SAFE_INTEGER, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
+    const constrained = convertFrames(subset, { budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
+    console.log(`${frameCount}\t${lossless.charCount}\t${constrained.charCount}\t${constrained.metrics.ssim.toFixed(6)}\t${constrained.strategy}`);
+  }
 }

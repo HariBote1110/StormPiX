@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { psnr, ssim, type Bitmap } from '../src/core/index';
+import { psnr, psnrMasked, ssim, ssimMasked, type Bitmap } from '../src/core/index';
 
 function solid(r: number, g: number, b: number, width = 16, height = 16): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -35,5 +35,18 @@ describe('quality metrics', () => {
     expect(ssim(source, altered)).toBeLessThan(1);
     expect(ssim(source, altered)).toBeGreaterThan(0.6);
     expect(psnr(source, altered)).toBeGreaterThan(10);
+  });
+
+  it('ignores uncertain pixels in masked metrics', () => {
+    const source = solid(4, 1, 20, 20, 20);
+    const altered = solid(4, 1, 20, 20, 20);
+    altered.data[0] = 255;
+    altered.data[1] = 255;
+    altered.data[2] = 255;
+    const certainty = Uint8Array.from([0, 1, 1, 1]);
+
+    expect(ssimMasked(source, altered, certainty)).toBe(1);
+    expect(psnrMasked(source, altered, certainty)).toBe(Infinity);
+    expect(ssimMasked(source, altered, Uint8Array.from([1, 1, 1, 1]))).toBeLessThan(1);
   });
 });

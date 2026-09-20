@@ -7,6 +7,10 @@ export interface Bitmap {
 
 export type Rgb = readonly [number, number, number];
 
+export type PixelCertainty = 0 | 1;
+export const UNCERTAIN: PixelCertainty = 0;
+export const CERTAIN: PixelCertainty = 1;
+
 export type EmitStrategy = 'direct' | 'table' | 'packed';
 
 export interface ConvertOptions {
@@ -48,7 +52,12 @@ export interface ConvertResult {
 
 /** One opaque Stormworks drawing command. */
 export type DrawOp =
-  | { readonly type: 'setColour'; readonly r: number; readonly g: number; readonly b: number }
+  | { readonly type: 'setColour'; readonly r: number; readonly g: number; readonly b: number; readonly a?: number }
   | { readonly type: 'rectF'; readonly x: number; readonly y: number; readonly w: number; readonly h: number }
   | { readonly type: 'rect'; readonly x: number; readonly y: number; readonly w: number; readonly h: number }
-  | { readonly type: 'line'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number };
+  | { readonly type: 'line'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number }
+  | { readonly type: 'triangle'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number; readonly x3: number; readonly y3: number }
+  | { readonly type: 'triangleF'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number; readonly x3: number; readonly y3: number }
+  | { readonly type: 'circle'; readonly x: number; readonly y: number; readonly radius: number }
+  | { readonly type: 'circleF'; readonly x: number; readonly y: number; readonly radius: number }
+  | { readonly type: 'text'; readonly x: number; readonly y: number; readonly text: string };
