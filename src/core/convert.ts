@@ -284,6 +284,15 @@ function convertLossless(source: Bitmap, options: ConvertOptions, started: numbe
   return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started);
 }
 
+function losslessSingleScriptForFit(result: ConvertResult, budget: number, started: number): ConvertResult | undefined {
+  if (result.scripts.length !== 1 || result.lua.length > budget) return undefined;
+  return {
+    ...result,
+    withinBudget: true,
+    stats: { ...result.stats, elapsedMs: performance.now() - started, timeBudgetTruncated: false },
+  };
+}
+
 function maxColoursSequence(maxColours: number): number[] {
   const values = new Set<number>();
   const cap = Math.max(1, Math.floor(maxColours));
@@ -527,6 +536,9 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   const started = performance.now();
   if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
+  const lossless = convertLossless(source, { ...options, mode: 'lossless', budget: Number.MAX_SAFE_INTEGER }, started);
+  const losslessFit = losslessSingleScriptForFit(lossless, budget, started);
+  if (losslessFit) return losslessFit;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_WORK_BUDGET, budget >= 4000 ? HIGH_BUDGET_WORK_CAP : DEFAULT_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
@@ -638,6 +650,11 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
   };
 }
 
+function convertFramesFitWithLosslessFallback(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number }, budget: number, started: number): ConvertResult | undefined {
+  const lossless = convertFramesLossless(frames, { ...options, mode: 'lossless', budget: Number.MAX_SAFE_INTEGER }, started);
+  return losslessSingleScriptForFit(lossless, budget, started);
+}
+
 /** Convert a sequence with one palette and a measured full-frame/diff choice. */
 export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number } = {}): ConvertResult {
   if (frames.length === 0) throw new RangeError('At least one frame is required');
@@ -649,6 +666,8 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
 
   const budget = options.budget ?? DEFAULT_BUDGET;
+  const losslessFit = convertFramesFitWithLosslessFallback(frames, options, budget, started);
+  if (losslessFit) return losslessFit;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_ANIMATION_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
