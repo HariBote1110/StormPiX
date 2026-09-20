@@ -33,7 +33,7 @@ function runWithClock(source: Bitmap, timeBudgetMs: number, clock: () => number)
 describe('deterministic conversion work', () => {
   it('does not depend on wall-clock progress across mapped work-budget tiers', () => {
     const source = photoLike();
-    for (const timeBudgetMs of [4000, 5000, 6000]) {
+    for (const timeBudgetMs of [2500, 3000, 3500]) {
       const idle = runWithClock(source, timeBudgetMs, () => 0);
       let ticks = 0;
       const loaded = runWithClock(source, timeBudgetMs, () => { ticks += 1; return ticks <= 2 ? 0 : 1000; });
