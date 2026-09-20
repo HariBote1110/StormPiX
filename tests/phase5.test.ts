@@ -70,4 +70,17 @@ describe('Phase 5 lossless output', () => {
     expect(result.scripts).toHaveLength(1);
     expect(result.totalCharCount).toBe(result.charCount);
   });
+
+  it('does not let fit be dominated by a lossless single-script candidate', () => {
+    const fixtures = [blocks([0, 2, 4]), blocks([0, 2, 4, 6]), blocks([0, 1, 2, 3, 4])];
+    for (const frames of fixtures) {
+      for (const budget of [500, 1000, 8192]) {
+        const lossless = convertFrames(frames, { mode: 'lossless', budget, ticksPerFrame: 2, seed: 0 });
+        if (!lossless.withinBudget || lossless.scripts.length !== 1) continue;
+        const fit = convertFrames(frames, { mode: 'fit', budget, ticksPerFrame: 2, seed: 0 });
+        expect(fit.charCount).toBeLessThanOrEqual(lossless.charCount);
+        expect(fit.metrics.ssim).toBeGreaterThanOrEqual(lossless.metrics.ssim - 1e-12);
+      }
+    }
+  });
 });
