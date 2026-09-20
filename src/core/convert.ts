@@ -12,6 +12,8 @@ const DEFAULT_WORK_BUDGET = 60;
 const DEFAULT_ANIMATION_WORK_BUDGET = 40;
 const HIGH_BUDGET_WORK_CAP = 12;
 const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
+const losslessImageCache = new WeakMap<object, Map<string, ConvertResult>>();
+const losslessAnimationCache = new WeakMap<object, Map<string, ConvertResult>>();
 
 interface WorkControl {
   readonly take: () => boolean;
@@ -284,6 +286,20 @@ function convertLossless(source: Bitmap, options: ConvertOptions, started: numbe
   return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started);
 }
 
+function cachedConvertLossless(source: Bitmap, options: ConvertOptions, started: number): ConvertResult {
+  const key = strategyCacheKey(options);
+  let entries = losslessImageCache.get(source);
+  if (!entries) {
+    entries = new Map<string, ConvertResult>();
+    losslessImageCache.set(source, entries);
+  }
+  const cached = entries.get(key);
+  if (cached) return cached;
+  const result = convertLossless(source, options, started);
+  entries.set(key, result);
+  return result;
+}
+
 function losslessSingleScriptForFit(result: ConvertResult, budget: number, started: number): ConvertResult | undefined {
   if (result.scripts.length !== 1 || result.lua.length > budget) return undefined;
   return {
@@ -295,6 +311,14 @@ function losslessSingleScriptForFit(result: ConvertResult, budget: number, start
 
 function losslessOptions(options: ConvertOptions, budget: number): ConvertOptions {
   return { ...options, mode: 'lossless', budget };
+}
+
+function canUseLosslessFitCandidate(options: ConvertOptions): boolean {
+  return options.maxColours === undefined && options.dither === undefined;
+}
+
+function strategyCacheKey(options: ConvertOptions): string {
+  return options.strategies?.join(',') ?? ALL_STRATEGIES.join(',');
 }
 
 function maxColoursSequence(maxColours: number): number[] {
@@ -540,9 +564,11 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   const started = performance.now();
   if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
-  const lossless = convertLossless(source, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
-  const losslessFit = losslessSingleScriptForFit(lossless, budget, started);
-  if (losslessFit) return losslessFit;
+  if (canUseLosslessFitCandidate(options)) {
+    const lossless = cachedConvertLossless(source, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
+    const losslessFit = losslessSingleScriptForFit(lossless, budget, started);
+    if (losslessFit) return losslessFit;
+  }
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_WORK_BUDGET, budget >= 4000 ? HIGH_BUDGET_WORK_CAP : DEFAULT_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
@@ -655,7 +681,17 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
 }
 
 function convertFramesFitWithLosslessFallback(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number }, budget: number, started: number): ConvertResult | undefined {
-  const lossless = convertFramesLossless(frames, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
+  const key = `${options.ticksPerFrame ?? 6}:${strategyCacheKey(options)}`;
+  let entries = losslessAnimationCache.get(frames);
+  if (!entries) {
+    entries = new Map<string, ConvertResult>();
+    losslessAnimationCache.set(frames, entries);
+  }
+  let lossless = entries.get(key);
+  if (!lossless) {
+    lossless = convertFramesLossless(frames, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
+    entries.set(key, lossless);
+  }
   return losslessSingleScriptForFit(lossless, budget, started);
 }
 
@@ -670,8 +706,10 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
 
   const budget = options.budget ?? DEFAULT_BUDGET;
-  const losslessFit = convertFramesFitWithLosslessFallback(frames, options, budget, started);
-  if (losslessFit) return losslessFit;
+  if (canUseLosslessFitCandidate(options)) {
+    const losslessFit = convertFramesFitWithLosslessFallback(frames, options, budget, started);
+    if (losslessFit) return losslessFit;
+  }
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_ANIMATION_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
