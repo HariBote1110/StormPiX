@@ -7,7 +7,36 @@ import { render } from './render.ts';
 import type { Bitmap, ConvertOptions, ConvertResult, DrawOp, EmitStrategy, QualityMetrics, Rgb } from './types.ts';
 
 const DEFAULT_BUDGET = 8192;
+const DEFAULT_TIME_BUDGET_MS = 5000;
+const DEFAULT_WORK_BUDGET = 60;
+const DEFAULT_ANIMATION_WORK_BUDGET = 40;
+const HIGH_BUDGET_WORK_CAP = 12;
 const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
+
+interface WorkControl {
+  readonly take: () => boolean;
+  readonly timeBudgetTruncated: () => boolean;
+}
+
+function createWorkControl(timeBudgetMs: number, defaultWorkBudget: number, maximumWorkBudget = Number.MAX_SAFE_INTEGER): WorkControl {
+  const started = performance.now();
+  const safetyDeadline = started + Math.max(1, timeBudgetMs);
+  const timeRatio = Math.min(1, Math.max(1, timeBudgetMs) / DEFAULT_TIME_BUDGET_MS);
+  let remaining = Math.max(1, Math.min(maximumWorkBudget, Math.floor(defaultWorkBudget * Math.sqrt(timeRatio))));
+  let truncated = false;
+  return {
+    take: (): boolean => {
+      if (remaining <= 0) return false;
+      if (performance.now() >= safetyDeadline) {
+        truncated = true;
+        return false;
+      }
+      remaining -= 1;
+      return true;
+    },
+    timeBudgetTruncated: (): boolean => truncated,
+  };
+}
 
 interface Candidate {
   readonly ops: DrawOp[];
@@ -69,13 +98,14 @@ function lowBudgetRefinement(
   indices: Uint16Array,
   strategies: readonly EmitStrategy[],
   budget: number,
+  takeWork: () => boolean,
 ): Candidate | undefined {
   const baseColour = quantiseForQuality(source, 1).palette[0] ?? [0, 0, 0];
   const baseOps: DrawOp[] = [
     { type: 'setColour', r: baseColour[0], g: baseColour[1], b: baseColour[2] },
     { type: 'rectF', x: 0, y: 0, w: source.width, h: source.height },
   ];
-  let best = makeOpsCandidate(source, palette, baseOps, strategies, budget);
+  let best = takeWork() ? makeOpsCandidate(source, palette, baseOps, strategies, budget) : undefined;
   const complete = cover({ width: source.width, height: source.height, indices }, palette);
   const patches: RefinementPatch[] = [];
   let colour: Rgb | undefined;
@@ -99,6 +129,7 @@ function lowBudgetRefinement(
   }
   patches.sort((left, right) => right.score - left.score);
   for (const patch of patches.slice(0, 12)) {
+    if (!takeWork()) break;
     const candidate = makeOpsCandidate(source, palette, [...baseOps, ...patch.ops], strategies, budget);
     if (candidate && candidateBetter(candidate, best)) best = candidate;
   }
@@ -280,8 +311,8 @@ function evaluateAnimation(
 export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertResult {
   const started = performance.now();
   const budget = options.budget ?? DEFAULT_BUDGET;
-  const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_BUDGET);
-  const deadline = started + Math.max(1, Math.min(timeBudgetMs, 1000));
+  const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
+  const work = createWorkControl(timeBudgetMs, DEFAULT_WORK_BUDGET, budget >= 4000 ? HIGH_BUDGET_WORK_CAP : DEFAULT_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
   const maxColours = Math.max(1, Math.floor(options.maxColours ?? 256));
   const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
@@ -289,23 +320,22 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   let lastPalette: readonly Rgb[] = [[0, 0, 0]];
 
   if (source.width > 0 && source.height > 0 && budget >= 0) {
-    const defaultColour = makeDefaultColourCandidate(source, strategies, budget);
+    const defaultColour = work.take() ? makeDefaultColourCandidate(source, strategies, budget) : undefined;
     if (defaultColour) best = defaultColour;
     const base = quantiseForQuality(source, 1);
-    const baseCandidate = makeCandidate(source, base.palette, base.indices, strategies, budget);
+    const baseCandidate = work.take() ? makeCandidate(source, base.palette, base.indices, strategies, budget) : undefined;
     if (baseCandidate && candidateBetter(baseCandidate, best)) best = baseCandidate;
-    if (options.maxColours === undefined && source.width * source.height <= 2048 && performance.now() < deadline) {
+    if (options.maxColours === undefined && source.width * source.height <= 2048 && work.take()) {
       const exact = exactLabels(source);
       const exactCandidate = makeCandidate(source, exact.palette, exact.indices, strategies, budget);
       if (exactCandidate && candidateBetter(exactCandidate, best)) best = exactCandidate;
     }
     outer: for (const colourCount of maxColoursSequence(searchColours)) {
-      if (performance.now() >= deadline) break;
       const quantised = quantiseForQuality(source, colourCount, { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
       lastPalette = quantised.palette;
       const sizes = colourCount > 32 ? [1] : blockSizes(source);
       for (const blockSize of sizes) {
-        if (performance.now() >= deadline) break outer;
+        if (!work.take()) break outer;
         const indices = blockSize === 1 ? quantised.indices : blockify(source, quantised.palette, blockSize);
         const candidate = makeCandidate(source, quantised.palette, indices, strategies, budget);
         if (candidate) {
@@ -313,9 +343,9 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
         }
       }
     }
-    if (budget <= 1000 && searchColours > 1 && performance.now() < deadline) {
+    if (budget <= 1000 && searchColours > 1) {
       const refinement = quantiseForQuality(source, Math.min(searchColours, 16), { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
-      const refined = lowBudgetRefinement(source, refinement.palette, refinement.indices, strategies, budget);
+      const refined = lowBudgetRefinement(source, refinement.palette, refinement.indices, strategies, budget, work.take);
       if (refined && candidateBetter(refined, best)) best = refined;
     }
   }
@@ -350,6 +380,7 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
       setColourCalls: best.ops.filter((op) => op.type === 'setColour').length,
       rects: best.ops.filter((op) => op.type === 'rectF').length,
       elapsedMs,
+      timeBudgetTruncated: work.timeBudgetTruncated(),
     },
   };
 }
@@ -364,8 +395,8 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
 
   const started = performance.now();
   const budget = options.budget ?? DEFAULT_BUDGET;
-  const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? 5000);
-  const deadline = started + timeBudgetMs;
+  const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
+  const work = createWorkControl(timeBudgetMs, DEFAULT_ANIMATION_WORK_BUDGET);
   const strategies = options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES;
   const maxColours = Math.max(1, Math.floor(options.maxColours ?? 256));
   const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
@@ -380,18 +411,17 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
     if (evaluated.best && animationCandidateBetter(evaluated.best, best)) best = evaluated.best;
   };
 
-  if (options.maxColours === undefined && frames.reduce((area, frame) => area + frame.width * frame.height, 0) <= 2048 && performance.now() < deadline) {
+  if (options.maxColours === undefined && frames.reduce((area, frame) => area + frame.width * frame.height, 0) <= 2048 && work.take()) {
     const exact = exactLabelsFrames(frames);
     consider(exact.palette, exact.indices);
   }
   const combined = combinedFrames(frames);
   outer: for (const colourCount of maxColoursSequence(searchColours)) {
-    if (performance.now() >= deadline) break;
     const quantised = quantiseForQuality(combined, colourCount, { dither: options.dither ?? 'none', seed: options.seed ?? 0 });
     lastPalette = quantised.palette;
     const labels = splitCombinedIndices(quantised.indices, width, height, frames.length);
     for (const blockSize of blockSizes(frames[0] as Bitmap)) {
-      if (performance.now() >= deadline) break outer;
+      if (!work.take()) break outer;
       const indices = blockSize === 1 ? labels : frames.map((frame) => blockify(frame, quantised.palette, blockSize));
       consider(quantised.palette, indices);
     }
@@ -423,6 +453,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       frameOps,
       encoding: best.encoding,
       fullFrameChars: emitAnimationLua(best.fullOps, best.strategy, ticksPerFrame, false).length,
+      timeBudgetTruncated: work.timeBudgetTruncated(),
     },
   };
 }

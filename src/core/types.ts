@@ -37,6 +37,8 @@ export interface ConvertStats {
   readonly frameOps?: readonly number[];
   readonly encoding?: 'full' | 'keyframe-diff';
   readonly fullFrameChars?: number;
+  /** True when the safety time cap stopped deterministic work early. */
+  readonly timeBudgetTruncated?: boolean;
 }
 
 export interface ConvertResult {
