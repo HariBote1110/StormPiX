@@ -293,6 +293,10 @@ function losslessSingleScriptForFit(result: ConvertResult, budget: number, start
   };
 }
 
+function losslessOptions(options: ConvertOptions, budget: number): ConvertOptions {
+  return { ...options, mode: 'lossless', budget };
+}
+
 function maxColoursSequence(maxColours: number): number[] {
   const values = new Set<number>();
   const cap = Math.max(1, Math.floor(maxColours));
@@ -536,7 +540,7 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   const started = performance.now();
   if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
-  const lossless = convertLossless(source, { ...options, mode: 'lossless', budget: Number.MAX_SAFE_INTEGER }, started);
+  const lossless = convertLossless(source, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
   const losslessFit = losslessSingleScriptForFit(lossless, budget, started);
   if (losslessFit) return losslessFit;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
@@ -651,7 +655,7 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
 }
 
 function convertFramesFitWithLosslessFallback(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number }, budget: number, started: number): ConvertResult | undefined {
-  const lossless = convertFramesLossless(frames, { ...options, mode: 'lossless', budget: Number.MAX_SAFE_INTEGER }, started);
+  const lossless = convertFramesLossless(frames, losslessOptions(options, Number.MAX_SAFE_INTEGER), started);
   return losslessSingleScriptForFit(lossless, budget, started);
 }
 
