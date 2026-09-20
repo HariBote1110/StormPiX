@@ -1,5 +1,5 @@
 import { cover, type LabelImage } from './cover.ts';
-import { emitAnimationLua, emitLua } from './cost.ts';
+import { emitAnimationLua, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitLua } from './cost.ts';
 import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
@@ -86,6 +86,95 @@ function makeOpsCandidate(source: Bitmap, palette: readonly Rgb[], ops: DrawOp[]
   return best;
 }
 
+interface LosslessRecord {
+  readonly colour: Extract<DrawOp, { type: 'setColour' }>;
+  readonly draw: DrawOp;
+}
+
+function losslessRecords(ops: readonly DrawOp[]): LosslessRecord[] {
+  const records: LosslessRecord[] = [];
+  let colour: Extract<DrawOp, { type: 'setColour' }> | undefined;
+  for (const op of ops) {
+    if (op.type === 'setColour') colour = op;
+    else if (colour) records.push({ colour, draw: op });
+  }
+  return records;
+}
+
+function losslessSegmentOps(records: readonly LosslessRecord[], start: number, end: number): DrawOp[] {
+  const ops: DrawOp[] = [];
+  let previousColour: string | undefined;
+  for (let index = start; index < end; index += 1) {
+    const record = records[index] as LosslessRecord;
+    const key = `${record.colour.r},${record.colour.g},${record.colour.b},${record.colour.a ?? ''}`;
+    if (key !== previousColour) {
+      ops.push(record.colour);
+      previousColour = key;
+    }
+    ops.push(record.draw);
+  }
+  return ops;
+}
+
+function shortestLosslessSegment(records: readonly LosslessRecord[], start: number, end: number, strategies: readonly EmitStrategy[]): string {
+  const segment = losslessSegmentOps(records, start, end);
+  let shortest = emitLua(segment, strategies[0] ?? 'direct');
+  for (const strategy of strategies.slice(1)) {
+    const lua = strategy === 'packed' ? '' : emitLua(segment, strategy);
+    if (lua !== '' && lua.length < shortest.length) shortest = lua;
+  }
+  return shortest;
+}
+
+function splitLosslessOps(ops: readonly DrawOp[], budget: number, strategies: readonly EmitStrategy[]): { readonly scripts: readonly string[]; readonly strategy: EmitStrategy } {
+  const records = losslessRecords(ops);
+  if (records.length === 0) return { scripts: [emitLua([], strategies[0] ?? 'direct')], strategy: strategies[0] ?? 'direct' };
+  const splitStrategies = strategies.filter((strategy) => strategy !== 'packed');
+  const safeStrategies = splitStrategies.length > 0 ? splitStrategies : ['direct' as const];
+  const wholeCandidates = strategies.map((strategy) => ({ strategy, lua: emitLua(ops, strategy) })).sort((left, right) => left.lua.length - right.lua.length);
+  const whole = wholeCandidates[0] as { readonly strategy: EmitStrategy; readonly lua: string };
+  if (whole.lua.length <= budget) return { scripts: [whole.lua], strategy: whole.strategy };
+
+  const costs = new Map<string, string>();
+  const segment = (start: number, end: number): string => {
+    const key = `${start}:${end}`;
+    const cached = costs.get(key);
+    if (cached !== undefined) return cached;
+    const lua = shortestLosslessSegment(records, start, end, safeStrategies);
+    costs.set(key, lua);
+    return lua;
+  };
+  const bestCost = new Array<number>(records.length + 1).fill(Number.POSITIVE_INFINITY);
+  const bestCount = new Array<number>(records.length + 1).fill(Number.POSITIVE_INFINITY);
+  const previous = new Array<number>(records.length + 1).fill(-1);
+  bestCost[0] = 0;
+  bestCount[0] = 0;
+  for (let end = 1; end <= records.length; end += 1) {
+    for (let start = 0; start < end; start += 1) {
+      const lua = segment(start, end);
+      if (lua.length > budget || !Number.isFinite(bestCost[start])) continue;
+      const cost = (bestCost[start] as number) + lua.length;
+      const count = (bestCount[start] as number) + 1;
+      if (cost < (bestCost[end] as number) || (cost === bestCost[end] && count < (bestCount[end] as number))) {
+        bestCost[end] = cost;
+        bestCount[end] = count;
+        previous[end] = start;
+      }
+    }
+  }
+  if (previous[records.length] === -1) {
+    return { scripts: records.map((_, index) => segment(index, index + 1)), strategy: 'direct' };
+  }
+  const scripts: string[] = [];
+  let end = records.length;
+  while (end > 0) {
+    const start = previous[end] as number;
+    scripts.unshift(segment(start, end));
+    end = start;
+  }
+  return { scripts, strategy: 'direct' };
+}
+
 interface RefinementPatch {
   readonly ops: DrawOp[];
   readonly score: number;
@@ -150,6 +239,49 @@ function makeDefaultColourCandidate(source: Bitmap, strategies: readonly EmitStr
     rendered,
     metrics: { ssim: ssim(source, rendered), psnr: psnr(source, rendered), rmse: rmse(source, rendered) },
   };
+}
+
+function losslessResult(
+  source: Bitmap,
+  palette: readonly Rgb[],
+  ops: readonly DrawOp[],
+  strategies: readonly EmitStrategy[],
+  budget: number,
+  started: number,
+): ConvertResult {
+  const rendered = render(ops, source.width, source.height);
+  const metrics = { ssim: ssim(source, rendered), psnr: psnr(source, rendered), rmse: rmse(source, rendered) };
+  const emitted = strategies.map((strategy) => ({ strategy, lua: emitLua(ops, strategy) })).sort((left, right) => left.lua.length - right.lua.length);
+  const shortest = emitted[0] ?? { strategy: 'direct' as const, lua: emitLua(ops, 'direct') };
+  const split = shortest.lua.length <= budget ? { scripts: [shortest.lua], strategy: shortest.strategy } : splitLosslessOps(ops, budget, strategies);
+  const scripts = split.scripts.length > 0 ? split.scripts : [shortest.lua];
+  const lua = scripts[0] as string;
+  const allOps = ops;
+  return {
+    lua,
+    scripts,
+    totalCharCount: scripts.reduce((sum, script) => sum + script.length, 0),
+    charCount: lua.length,
+    withinBudget: scripts.every((script) => script.length <= budget),
+    strategy: split.strategy,
+    palette,
+    rendered,
+    metrics,
+    stats: {
+      ops: allOps.length,
+      setColourCalls: allOps.filter((op) => op.type === 'setColour').length,
+      rects: allOps.filter((op) => op.type === 'rectF').length,
+      elapsedMs: performance.now() - started,
+      timeBudgetTruncated: false,
+    },
+  };
+}
+
+function convertLossless(source: Bitmap, options: ConvertOptions, started: number): ConvertResult {
+  const budget = options.budget ?? DEFAULT_BUDGET;
+  const exact = exactLabels(source);
+  const ops = orderOps(cover({ width: source.width, height: source.height, indices: exact.indices }, exact.palette));
+  return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started);
 }
 
 function maxColoursSequence(maxColours: number): number[] {
@@ -286,6 +418,89 @@ function prepareAnimation(frames: readonly Bitmap[], palette: readonly Rgb[], in
   return { fullOps, diffOps, rendered: renderedFrames[0] as Bitmap, metrics };
 }
 
+interface LosslessAnimationScripts {
+  readonly scripts: readonly string[];
+  readonly ranges: readonly (readonly [number, number])[];
+  readonly encoding: 'full' | 'keyframe-diff';
+}
+
+function losslessAnimationSegment(
+  fullOps: readonly (readonly DrawOp[])[],
+  diffOps: readonly (readonly DrawOp[])[],
+  start: number,
+  end: number,
+  ticksPerFrame: number,
+  colours: readonly string[],
+): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } {
+  const fullOpsForSegment = fullOps.slice(start, end);
+  const diffOpsForSegment = [fullOps[start] as readonly DrawOp[], ...diffOps.slice(start + 1, end)];
+  const fullCandidates = [
+    emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame),
+    emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame),
+  ];
+  const diffCandidates = [
+    emitAnimationLuaCompact(diffOpsForSegment, ticksPerFrame),
+    emitAnimationLuaCompactRectangles(diffOpsForSegment, colours, ticksPerFrame),
+  ];
+  const full = fullCandidates.sort((left, right) => left.length - right.length)[0] as string;
+  const diff = diffCandidates.sort((left, right) => left.length - right.length)[0] as string;
+  return diff.length < full.length ? { lua: diff, encoding: 'keyframe-diff' } : { lua: full, encoding: 'full' };
+}
+
+function splitLosslessAnimation(
+  fullOps: readonly (readonly DrawOp[])[],
+  diffOps: readonly (readonly DrawOp[])[],
+  budget: number,
+  ticksPerFrame: number,
+  colours: readonly string[],
+): LosslessAnimationScripts {
+  const frameCount = fullOps.length;
+  const cache = new Map<string, { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' }>();
+  const segment = (start: number, end: number): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } => {
+    const key = `${start}:${end}`;
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const result = losslessAnimationSegment(fullOps, diffOps, start, end, ticksPerFrame, colours);
+    cache.set(key, result);
+    return result;
+  };
+  const costs = new Array<number>(frameCount + 1).fill(Number.POSITIVE_INFINITY);
+  const counts = new Array<number>(frameCount + 1).fill(Number.POSITIVE_INFINITY);
+  const previous = new Array<number>(frameCount + 1).fill(-1);
+  costs[0] = 0;
+  counts[0] = 0;
+  for (let end = 1; end <= frameCount; end += 1) {
+    for (let start = 0; start < end; start += 1) {
+      const candidate = segment(start, end);
+      if (candidate.lua.length > budget || !Number.isFinite(costs[start])) continue;
+      const cost = (costs[start] as number) + candidate.lua.length;
+      const count = (counts[start] as number) + 1;
+      if (cost < (costs[end] as number) || (cost === costs[end] && count < (counts[end] as number))) {
+        costs[end] = cost;
+        counts[end] = count;
+        previous[end] = start;
+      }
+    }
+  }
+  if (previous[frameCount] === -1) {
+    const scripts = fullOps.map((ops) => emitAnimationLuaCompact([ops], ticksPerFrame));
+    return { scripts, ranges: fullOps.map((_, index) => [index, index + 1] as const), encoding: 'full' };
+  }
+  const scripts: string[] = [];
+  const ranges: (readonly [number, number])[] = [];
+  let encoding: 'full' | 'keyframe-diff' = 'full';
+  let end = frameCount;
+  while (end > 0) {
+    const start = previous[end] as number;
+    const candidate = segment(start, end);
+    scripts.unshift(candidate.lua);
+    ranges.unshift([start, end]);
+    if (candidate.encoding === 'keyframe-diff') encoding = 'keyframe-diff';
+    end = start;
+  }
+  return { scripts, ranges, encoding };
+}
+
 function evaluateAnimation(
   prepared: PreparedAnimation,
   palette: readonly Rgb[],
@@ -310,6 +525,7 @@ function evaluateAnimation(
 /** Convert one bitmap by maximising measured SSIM among candidates that fit the character budget. */
 export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertResult {
   const started = performance.now();
+  if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_WORK_BUDGET, budget >= 4000 ? HIGH_BUDGET_WORK_CAP : DEFAULT_WORK_BUDGET);
@@ -369,6 +585,8 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   const elapsedMs = performance.now() - started;
   return {
     lua: best.lua,
+    scripts: [best.lua],
+    totalCharCount: best.lua.length,
     charCount,
     withinBudget: charCount <= budget,
     strategy: best.strategy,
@@ -385,6 +603,41 @@ export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertRe
   };
 }
 
+function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number }, started: number): ConvertResult {
+  const budget = options.budget ?? DEFAULT_BUDGET;
+  const ticksPerFrame = Number.isFinite(options.ticksPerFrame) ? Math.max(1, Math.floor(options.ticksPerFrame as number)) : 6;
+  const exact = exactLabelsFrames(frames);
+  const prepared = prepareAnimation(frames, exact.palette, exact.indices);
+  const colours = exact.palette.map((colour) => colour.join(','));
+  const split = splitLosslessAnimation(prepared.fullOps, prepared.diffOps, budget, ticksPerFrame, colours);
+  const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(prepared.fullOps, ticksPerFrame)];
+  const lua = scripts[0] as string;
+  const allOps = prepared.fullOps.flat();
+  return {
+    lua,
+    scripts,
+    totalCharCount: scripts.reduce((sum, script) => sum + script.length, 0),
+    charCount: lua.length,
+    withinBudget: scripts.every((script) => script.length <= budget),
+    strategy: 'direct',
+    palette: exact.palette,
+    rendered: prepared.rendered,
+    metrics: prepared.metrics,
+    stats: {
+      ops: allOps.length,
+      setColourCalls: allOps.filter((op) => op.type === 'setColour').length,
+      rects: allOps.filter((op) => op.type === 'rectF').length,
+      elapsedMs: performance.now() - started,
+      frameCount: frames.length,
+      frameOps: prepared.fullOps.map((ops) => ops.length),
+      encoding: split.encoding,
+      fullFrameChars: Math.min(emitAnimationLuaCompact(prepared.fullOps, ticksPerFrame).length, emitAnimationLuaCompactRectangles(prepared.fullOps, colours, ticksPerFrame).length),
+      scriptFrameRanges: split.ranges,
+      timeBudgetTruncated: false,
+    },
+  };
+}
+
 /** Convert a sequence with one palette and a measured full-frame/diff choice. */
 export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number } = {}): ConvertResult {
   if (frames.length === 0) throw new RangeError('At least one frame is required');
@@ -392,8 +645,9 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const width = frames[0]?.width ?? 0;
   const height = frames[0]?.height ?? 0;
   if (frames.some((frame) => frame.width !== width || frame.height !== height)) throw new RangeError('Animation frames must have matching dimensions');
-
   const started = performance.now();
+  if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
+
   const budget = options.budget ?? DEFAULT_BUDGET;
   const timeBudgetMs = Math.max(1, options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const work = createWorkControl(timeBudgetMs, DEFAULT_ANIMATION_WORK_BUDGET);
@@ -438,6 +692,8 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const allOps = best.playbackOps.flat();
   return {
     lua: best.lua,
+    scripts: [best.lua],
+    totalCharCount: best.lua.length,
     charCount,
     withinBudget: charCount <= budget,
     strategy: best.strategy,

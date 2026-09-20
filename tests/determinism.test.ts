@@ -24,7 +24,7 @@ function photoLike(): Bitmap {
 function runWithClock(source: Bitmap, timeBudgetMs: number, clock: () => number): ReturnType<typeof convert> {
   const spy = vi.spyOn(performance, 'now').mockImplementation(clock);
   try {
-    return convert(source, { budget: 8192, seed: 0, timeBudgetMs });
+    return convert(source, { mode: 'fit', budget: 8192, seed: 0, timeBudgetMs });
   } finally {
     spy.mockRestore();
   }

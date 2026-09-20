@@ -236,3 +236,118 @@ export function emitAnimationLua(
   });
   return animationBody(bodies, ticksPerFrame);
 }
+
+function compactAnimationBody(ops: readonly DrawOp[], palette: readonly string[] | undefined): { readonly body: string; readonly uses: Set<string> } {
+  let currentColour: string | undefined;
+  const statements: string[] = [];
+  const uses = new Set<string>();
+  for (const op of ops) {
+    switch (op.type) {
+      case 'setColour': {
+        const paletteIndex = palette?.indexOf(`${op.r},${op.g},${op.b}`) ?? -1;
+        const statement = paletteIndex >= 0 && op.a === undefined ? `C(${paletteIndex + 1})` : `C(${numberText(op.r)},${numberText(op.g)},${numberText(op.b)}${op.a === undefined ? '' : `,${numberText(op.a)}`})`;
+        if (statement !== currentColour) statements.push(statement);
+        currentColour = statement;
+        break;
+      }
+      case 'rectF': uses.add('F'); statements.push(`F(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
+      case 'rect': uses.add('R'); statements.push(`R(${numberText(op.x)},${numberText(op.y)},${numberText(op.w)},${numberText(op.h)})`); break;
+      case 'line': uses.add('L'); statements.push(`L(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)})`); break;
+      case 'triangle': uses.add('T'); statements.push(`T(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)},${numberText(op.x3)},${numberText(op.y3)})`); break;
+      case 'triangleF': uses.add('U'); statements.push(`U(${numberText(op.x1)},${numberText(op.y1)},${numberText(op.x2)},${numberText(op.y2)},${numberText(op.x3)},${numberText(op.y3)})`); break;
+      case 'circle': uses.add('O'); statements.push(`O(${numberText(op.x)},${numberText(op.y)},${numberText(op.radius)})`); break;
+      case 'circleF': uses.add('P'); statements.push(`P(${numberText(op.x)},${numberText(op.y)},${numberText(op.radius)})`); break;
+      case 'text': uses.add('X'); statements.push(`X(${numberText(op.x)},${numberText(op.y)},${JSON.stringify(op.text)})`); break;
+    }
+  }
+  return { body: statements.join(''), uses };
+}
+
+function compactAnimationPrefix(uses: ReadonlySet<string>, palette: readonly string[] | undefined, greyscale = false): string {
+  const aliases = ['F', 'R', 'L', 'T', 'U', 'O', 'P', 'X'].filter((name) => uses.has(name)).map((name) => {
+    const api = { F: 'drawRectF', R: 'drawRect', L: 'drawLine', T: 'drawTriangle', U: 'drawTriangleF', O: 'drawCircle', P: 'drawCircleF', X: 'drawText' }[name] as string;
+    return `${name}=S.${api}`;
+  });
+  const colour = palette
+    ? greyscale
+      ? `p={${palette.map((value) => value.split(',')[0]).join(',')}}function C(i)local c=p[i]S.setColor(c,c,c)end`
+      : `p={${palette.map((value) => `{${value}}`).join(',')}}function C(i)local c=p[i]S.setColor(c[1],c[2],c[3])end`
+    : 'C=S.setColor';
+  return `S=screen ${colour}${aliases.length > 0 ? ` ${aliases.join(' ')}` : ''} `;
+}
+
+function compactAnimationTick(ticksPerFrame: number, frameCount: number): string {
+  return `f=0 t=0 function onTick()t=t+1 if t==${ticksPerFrame} then t=0 f=(f+1)%${frameCount} end end `;
+}
+
+/** Emit a compact, self-contained animation used by lossless multi-script output. */
+export function emitAnimationLuaCompact(frameOps: readonly (readonly DrawOp[])[], ticksPerFrame = 6): string {
+  if (frameOps.length === 0) return 'function onDraw()end';
+  const plainBodies = frameOps.map((ops) => compactAnimationBody(ops, undefined));
+  const uses = new Set<string>(plainBodies.flatMap((entry) => [...entry.uses]));
+  const plain = `${compactAnimationPrefix(uses, undefined)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${plainBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`;
+  const colours = [...new Set(frameOps.flatMap((ops) => ops.filter((op): op is Extract<DrawOp, { type: 'setColour' }> => op.type === 'setColour' && op.a === undefined).map((op) => `${op.r},${op.g},${op.b}`)))];
+  if (colours.length === 0) return plain;
+  const paletteBodies = frameOps.map((ops) => compactAnimationBody(ops, colours));
+  const paletteUses = new Set<string>(paletteBodies.flatMap((entry) => [...entry.uses]));
+  const palette = `${compactAnimationPrefix(paletteUses, colours)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${paletteBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`;
+  const greyscale = colours.every((value) => {
+    const channels = value.split(',');
+    return channels[0] === channels[1] && channels[1] === channels[2];
+  });
+  const greyPalette = greyscale
+    ? `${compactAnimationPrefix(paletteUses, colours, true)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${paletteBodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('')}end end`
+    : '';
+  return [plain, palette, greyPalette].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string;
+}
+
+const COMPACT_RECT_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/';
+
+function encodeCompactRectangles(ops: readonly DrawOp[], colours: readonly string[]): string {
+  const indexes = new Map(colours.map((colour, index) => [colour, index] as const));
+  let currentColour = 0;
+  let result = '';
+  for (const op of ops) {
+    if (op.type === 'setColour') {
+      currentColour = indexes.get(`${op.r},${op.g},${op.b}`) ?? 0;
+      continue;
+    }
+    if (op.type !== 'rectF') continue;
+    const value = (Math.trunc(op.x) * 2 ** 24)
+      + (Math.trunc(op.y) * 2 ** 19)
+      + (Math.trunc(op.w) * 2 ** 13)
+      + (Math.trunc(op.h) * 2 ** 8)
+      + currentColour;
+    let encoded = '';
+    for (let shift = 24; shift >= 0; shift -= 6) encoded += COMPACT_RECT_ALPHABET[Math.floor(value / 2 ** shift) % 64] ?? '0';
+    result += encoded;
+  }
+  return result;
+}
+
+function compactRectanglePrefix(colours: readonly string[], greyscale: boolean): string {
+  const palette = greyscale
+    ? `p={${colours.map((colour) => colour.split(',')[0]).join(',')}}`
+    : `p={${colours.map((colour) => `{${colour}}`).join(',')}}`;
+  const colour = greyscale
+    ? 'local e=p[c+1]S.setColor(e,e,e)'
+    : 'local e=p[c+1]S.setColor(e[1],e[2],e[3])';
+  return `S=screen A="${COMPACT_RECT_ALPHABET}"${palette}F=S.drawRectF function D(d)local i=1 local q=-1 while i<=#d do local v=(string.find(A,string.sub(d,i,i),1,true)-1)*2^24+(string.find(A,string.sub(d,i+1,i+1),1,true)-1)*2^18+(string.find(A,string.sub(d,i+2,i+2),1,true)-1)*2^12+(string.find(A,string.sub(d,i+3,i+3),1,true)-1)*2^6+string.find(A,string.sub(d,i+4,i+4),1,true)-1 i=i+5 local x=math.floor(v/2^24)%64 local y=math.floor(v/2^19)%32 local w=math.floor(v/2^13)%64 local h=math.floor(v/2^8)%32 local c=v%256 if c~=q then ${colour} q=c end F(x,y,w,h)end end `;
+}
+
+/** Pack rectangle records while preserving their draw order and exact colours. */
+export function emitAnimationLuaCompactRectangles(
+  frameOps: readonly (readonly DrawOp[])[],
+  colours: readonly string[],
+  ticksPerFrame = 6,
+): string {
+  if (frameOps.length === 0) return 'function onDraw()end';
+  const greyscale = colours.every((value) => {
+    const channels = value.split(',');
+    return channels[0] === channels[1] && channels[1] === channels[2];
+  });
+  const prefix = compactRectanglePrefix(colours, greyscale);
+  const data = frameOps.map((ops) => encodeCompactRectangles(ops, colours));
+  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then${value === '' ? '' : `D("${value}")`}`).join('');
+  return `${prefix}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${branches}end end`;
+}

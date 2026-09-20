@@ -13,7 +13,10 @@ export const CERTAIN: PixelCertainty = 1;
 
 export type EmitStrategy = 'direct' | 'table' | 'packed';
 
+export type ConvertMode = 'lossless' | 'fit';
+
 export interface ConvertOptions {
+  readonly mode?: ConvertMode;
   readonly budget?: number;
   readonly maxColours?: number;
   readonly dither?: 'none' | 'floyd-steinberg';
@@ -39,11 +42,14 @@ export interface ConvertStats {
   readonly fullFrameChars?: number;
   /** True when the safety time cap stopped deterministic work early. */
   readonly timeBudgetTruncated?: boolean;
+  readonly scriptFrameRanges?: readonly (readonly [number, number])[];
 }
 
 export interface ConvertResult {
   readonly lua: string;
+  readonly scripts: readonly string[];
   readonly charCount: number;
+  readonly totalCharCount: number;
   readonly withinBudget: boolean;
   readonly strategy: EmitStrategy;
   readonly palette: readonly Rgb[];

@@ -129,7 +129,7 @@ for (const [name, source] of fixtures()) {
   const labels = { width: source.width, height: source.height, indices: quantised.indices };
   const scanlineCost = costOf(coverScanline(labels, quantised.palette), 'direct');
   const optimisedCost = costOf(cover(labels, quantised.palette), 'direct');
-  const result = convert(source, { budget: BUDGET, seed: 0, timeBudgetMs: 5000 });
+  const result = convert(source, { mode: 'fit', budget: BUDGET, seed: 0, timeBudgetMs: 5000 });
   console.log(`${name}\t${costOf(naive, 'direct')}\t${result.charCount}\t${result.withinBudget}\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.metrics.psnr === Infinity ? 'Infinity' : result.metrics.psnr.toFixed(2)}\t${result.stats.elapsedMs.toFixed(2)}\t${scanlineCost}\t${optimisedCost}`);
   // Keep these calls in the benchmark so its measured quality is visibly tied to render().
   void render(naive, source.width, source.height);
@@ -142,11 +142,11 @@ if (photo) {
   console.log('\nBUDGET SWEEP (photo-96)');
   console.log('budget\tcharCount\tutilisation\tstrategy\tssim\telapsedMs');
   for (const budget of BUDGET_SWEEP) {
-    const result = convert(photo, { budget, seed: 0, timeBudgetMs: 5000 });
+    const result = convert(photo, { mode: 'fit', budget, seed: 0, timeBudgetMs: 5000 });
     console.log(`${budget}\t${result.charCount}\t${((result.charCount / budget) * 100).toFixed(1)}%\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.elapsedMs.toFixed(2)}`);
   }
 
-  const denseResults = DENSE_BUDGET_SWEEP.map((budget) => ({ budget, result: convert(photo, { budget, seed: 0, timeBudgetMs: 5000 }) }));
+  const denseResults = DENSE_BUDGET_SWEEP.map((budget) => ({ budget, result: convert(photo, { mode: 'fit', budget, seed: 0, timeBudgetMs: 5000 }) }));
   let minimumSsimDelta = Infinity;
   let worstSsimPair: readonly [number, number] = [0, 0];
   let minimumCharDelta = Infinity;
@@ -191,9 +191,9 @@ console.log('\nANIMATION');
 console.log('animation\tframeCount\tnaiveChars\tcharCount\twithinBudget\tstrategy\tmeanSsim\tfullFrameChars\tsaving\telapsedMs');
 for (const [name, frames] of animationFixtures()) {
   const naiveStarted = performance.now();
-  const naiveChars = frames.reduce((sum, frame) => sum + convert(frame, { budget: BUDGET, seed: 0, timeBudgetMs: 5000 }).charCount, 0);
+  const naiveChars = frames.reduce((sum, frame) => sum + convert(frame, { mode: 'fit', budget: BUDGET, seed: 0, timeBudgetMs: 5000 }).charCount, 0);
   void (performance.now() - naiveStarted);
-  const result = convertFrames(frames, { budget: BUDGET, seed: 0, timeBudgetMs: 5000, ticksPerFrame: 6 });
+  const result = convertFrames(frames, { mode: 'fit', budget: BUDGET, seed: 0, timeBudgetMs: 5000, ticksPerFrame: 6 });
   const saving = naiveChars === 0 ? 0 : 1 - result.charCount / naiveChars;
   console.log(`${name}\t${frames.length}\t${naiveChars}\t${result.charCount}\t${result.withinBudget}\t${result.strategy}\t${result.metrics.ssim.toFixed(6)}\t${result.stats.fullFrameChars ?? '-'}\t${saving.toFixed(3)}\t${result.stats.elapsedMs.toFixed(2)}`);
 }
@@ -205,11 +205,11 @@ if (!existsSync(REAL_ASSET_PATH)) {
   if (names.length !== 40) throw new Error(`expected 40 PNG frames in ${REAL_ASSET_PATH}, found ${names.length}`);
   const realFrames = names.map((name) => readPng(`${REAL_ASSET_PATH}/${name}`));
   console.log('\nREAL ASSET (/Users/yuki/doc/al/pngX)');
-  console.log('frames\tlosslessChars\tone8192Chars\tone8192Ssim\tstrategy');
+  console.log('frames\tlosslessChars\tlosslessScripts\tlosslessSsim\tfitChars\tfitSsim\tfitStrategy');
   for (const frameCount of [4, 8, 16, 24, 40] as const) {
     const subset = realFrames.slice(0, frameCount);
-    const lossless = convertFrames(subset, { budget: Number.MAX_SAFE_INTEGER, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
-    const constrained = convertFrames(subset, { budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
-    console.log(`${frameCount}\t${lossless.charCount}\t${constrained.charCount}\t${constrained.metrics.ssim.toFixed(6)}\t${constrained.strategy}`);
+    const lossless = convertFrames(subset, { mode: 'lossless', budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
+    const fit = convertFrames(subset, { mode: 'fit', budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
+    console.log(`${frameCount}\t${lossless.totalCharCount}\t${lossless.scripts.length}\t${lossless.metrics.ssim.toFixed(6)}\t${fit.charCount}\t${fit.metrics.ssim.toFixed(6)}\t${fit.strategy}`);
   }
 }

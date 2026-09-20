@@ -18,7 +18,7 @@ function frame(width: number, height: number, shift: number): Bitmap {
 describe('Lua round-trip verification', () => {
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
     const source = frame(8, 8, 2);
-    const result = convert(source, { budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
+    const result = convert(source, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
     const execution = executeLua(result.lua, { frameCount: 1 });
     if (execution.skipped) return;
     expect(execution.skipped).toBe(false);
@@ -28,7 +28,7 @@ describe('Lua round-trip verification', () => {
 
   it.each(['direct', 'table', 'packed'] as const)('executes %s convertFrames playback across ticks', (strategy: EmitStrategy) => {
     const frames = [frame(8, 8, 0), frame(8, 8, 2), frame(8, 8, 4)];
-    const result = convertFrames(frames, { budget: 8192, maxColours: 2, strategies: [strategy], ticksPerFrame: 2, seed: 0 });
+    const result = convertFrames(frames, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], ticksPerFrame: 2, seed: 0 });
     const execution = executeLua(result.lua, { frameCount: frames.length, ticksPerFrame: 2, drawInitialFrame: true });
     if (execution.skipped) return;
     expect(execution.skipped).toBe(false);

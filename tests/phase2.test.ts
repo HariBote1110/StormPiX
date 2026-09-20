@@ -97,7 +97,7 @@ describe('Phase 2 emit strategies', () => {
   it('produces syntactically valid Lua when an interpreter is available', () => {
     const source = solid(4, 4, 20, 30, 40);
     for (const strategy of ['direct', 'table', 'packed'] as const) {
-      const result = convert(source, { budget: 8192, strategies: [strategy] });
+      const result = convert(source, { mode: 'fit', budget: 8192, strategies: [strategy] });
       const parsed = spawnSync('lua', ['-e', 'local f,e=load(io.read("*a"));assert(f,e)'], { input: result.lua, encoding: 'utf8' });
       if (parsed.error?.code === 'ENOENT') return;
       expect(parsed.status, parsed.stderr).toBe(0);
@@ -108,7 +108,7 @@ describe('Phase 2 emit strategies', () => {
 describe('convert', () => {
   it('returns a compact exact result for a flat bitmap', () => {
     const source = solid(32, 32, 38, 120, 210);
-    const result = convert(source, { budget: 8192, seed: 7 });
+    const result = convert(source, { mode: 'fit', budget: 8192, seed: 7 });
 
     expect(result.charCount).toBe(result.lua.length);
     expect(result.withinBudget).toBe(true);
@@ -119,20 +119,20 @@ describe('convert', () => {
 
   it('is byte deterministic for a fixed seed', () => {
     const source = solid(8, 8, 80, 90, 100);
-    const first = convert(source, { seed: 11, maxColours: 2 });
-    const second = convert(source, { seed: 11, maxColours: 2 });
+    const first = convert(source, { mode: 'fit', seed: 11, maxColours: 2 });
+    const second = convert(source, { mode: 'fit', seed: 11, maxColours: 2 });
     expect(second.lua).toBe(first.lua);
     expect(Array.from(second.rendered.data)).toEqual(Array.from(first.rendered.data));
 
-    const boundaryFirst = convert(photoLike(), { budget: 6400, seed: 0, timeBudgetMs: 1200 });
-    const boundarySecond = convert(photoLike(), { budget: 6400, seed: 0, timeBudgetMs: 1200 });
+    const boundaryFirst = convert(photoLike(), { mode: 'fit', budget: 6400, seed: 0, timeBudgetMs: 1200 });
+    const boundarySecond = convert(photoLike(), { mode: 'fit', budget: 6400, seed: 0, timeBudgetMs: 1200 });
     expect(boundarySecond.lua).toBe(boundaryFirst.lua);
   });
 
   it('does not spend more characters or claim higher quality at a lower budget', () => {
     const source = solid(16, 16, 80, 90, 100);
-    const generous = convert(source, { budget: 8192, seed: 3 });
-    const constrained = convert(source, { budget: 120, seed: 3 });
+    const generous = convert(source, { mode: 'fit', budget: 8192, seed: 3 });
+    const constrained = convert(source, { mode: 'fit', budget: 120, seed: 3 });
     expect(constrained.charCount).toBeLessThanOrEqual(generous.charCount);
     expect(constrained.metrics.ssim).toBeLessThanOrEqual(generous.metrics.ssim + 1e-12);
   });
@@ -140,7 +140,7 @@ describe('convert', () => {
   it('keeps equal-quality programmes at equal character cost', () => {
     const source = smallPhotoLike();
     const budgets = [200, 500, 1000, 2000];
-    const results = budgets.map((budget) => convert(source, { budget, seed: 0, timeBudgetMs: 1200 }));
+    const results = budgets.map((budget) => convert(source, { mode: 'fit', budget, seed: 0, timeBudgetMs: 1200 }));
 
     for (let lower = 0; lower < results.length; lower += 1) {
       for (let higher = lower + 1; higher < results.length; higher += 1) {
@@ -153,10 +153,10 @@ describe('convert', () => {
 
   it('buys strict quality gains when the budget doubles', () => {
     const source = smallPhotoLike();
-    const lower = convert(source, { budget: 100, seed: 0, timeBudgetMs: 1200 });
-    const higher = convert(source, { budget: 200, seed: 0, timeBudgetMs: 1200 });
-    const medium = convert(source, { budget: 500, seed: 0, timeBudgetMs: 1200 });
-    const larger = convert(source, { budget: 1000, seed: 0, timeBudgetMs: 1200 });
+    const lower = convert(source, { mode: 'fit', budget: 100, seed: 0, timeBudgetMs: 1200 });
+    const higher = convert(source, { mode: 'fit', budget: 200, seed: 0, timeBudgetMs: 1200 });
+    const medium = convert(source, { mode: 'fit', budget: 500, seed: 0, timeBudgetMs: 1200 });
+    const larger = convert(source, { mode: 'fit', budget: 1000, seed: 0, timeBudgetMs: 1200 });
 
     expect(higher.metrics.ssim).toBeGreaterThan(lower.metrics.ssim);
     expect(larger.metrics.ssim).toBeGreaterThan(medium.metrics.ssim);
@@ -165,7 +165,7 @@ describe('convert', () => {
   it('keeps quality monotonic across packed strategy boundaries', () => {
     const source = photoLike();
     const budgets = [4500, 5000, 5500, 5600, 5700, 5800, 6000, 6300, 6400, 6500, 7000];
-    const results = budgets.map((budget) => convert(source, { budget, seed: 0, timeBudgetMs: 1200 }));
+    const results = budgets.map((budget) => convert(source, { mode: 'fit', budget, seed: 0, timeBudgetMs: 1200 }));
 
     for (let index = 1; index < results.length; index += 1) {
       const previous = results[index - 1] as ReturnType<typeof convert>;
@@ -176,7 +176,7 @@ describe('convert', () => {
   }, 15000);
 
   it('emits the best fitting partial programme at a tiny budget', () => {
-    const result = convert(photoLike(), { budget: 60, seed: 0, timeBudgetMs: 5000 });
+    const result = convert(photoLike(), { mode: 'fit', budget: 60, seed: 0, timeBudgetMs: 5000 });
 
     expect(result.charCount).toBeGreaterThan(20);
     expect(result.charCount).toBeLessThanOrEqual(60);

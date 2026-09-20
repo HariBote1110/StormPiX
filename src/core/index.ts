@@ -1,6 +1,7 @@
 export type {
   Bitmap,
   ConvertOptions,
+  ConvertMode,
   ConvertResult,
   ConvertStats,
   DrawOp,

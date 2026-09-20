@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { convert, convertFrames, type Bitmap } from '../src/core/index';
+import { convert, convertFrames, render, replayLuaFrames, type Bitmap } from '../src/core/index';
+import { executeLua } from './lua-executor';
 
 function blocks(shifts: readonly number[]): readonly Bitmap[] {
   return shifts.map((shift) => {
@@ -18,33 +19,54 @@ function blocks(shifts: readonly number[]): readonly Bitmap[] {
   });
 }
 
-function expectLosslessContract(result: ReturnType<typeof convert>): void {
+function expectLosslessContract(result: ReturnType<typeof convert>, budget: number): void {
   expect(result.lua).toBe(result.scripts[0]);
   expect(result.charCount).toBe(result.lua.length);
   expect(result.totalCharCount).toBe(result.scripts.reduce((sum, script) => sum + script.length, 0));
-  expect(result.withinBudget).toBe(result.scripts.every((script) => script.length <= 96));
+  expect(result.withinBudget).toBe(result.scripts.every((script) => script.length <= budget));
   expect(result.metrics.ssim).toBe(1);
 }
 
 describe('Phase 5 lossless output', () => {
   it('keeps an exact single image while exposing the multi-script contract', () => {
     const result = convert(blocks([2])[0] as Bitmap, { mode: 'lossless', budget: 96, seed: 0 });
-    expectLosslessContract(result);
+    expectLosslessContract(result, 96);
     expect(result.scripts.length).toBeGreaterThan(1);
   });
 
   it('keeps every animation script exact and independently budgeted', () => {
-    const result = convertFrames(blocks([0, 2, 4, 6]), { mode: 'lossless', budget: 96, ticksPerFrame: 2, seed: 0 });
+    const frames = blocks([0, 2, 4, 6]);
+    const result = convertFrames(frames, { mode: 'lossless', budget: 300, ticksPerFrame: 2, seed: 0 });
     expect(result.lua).toBe(result.scripts[0]);
     expect(result.charCount).toBe(result.lua.length);
     expect(result.totalCharCount).toBe(result.scripts.reduce((sum, script) => sum + script.length, 0));
-    expect(result.withinBudget).toBe(result.scripts.every((script) => script.length <= 96));
+    expect(result.withinBudget).toBe(result.scripts.every((script) => script.length <= 300));
     expect(result.metrics.ssim).toBe(1);
+    for (let scriptIndex = 0; scriptIndex < result.scripts.length; scriptIndex += 1) {
+      const range = result.stats.scriptFrameRanges?.[scriptIndex];
+      expect(range).toBeDefined();
+      const execution = executeLua(result.scripts[scriptIndex] as string, { frameCount: (range?.[1] ?? 0) - (range?.[0] ?? 0), ticksPerFrame: 2 });
+      if (execution.skipped) return;
+      const rendered = replayLuaFrames(execution.frames, 8, 8);
+      for (let frame = 0; frame < rendered.length; frame += 1) expect(rendered[frame]?.data).toEqual(frames[(range?.[0] ?? 0) + frame]?.data);
+    }
+  });
+
+  it('composes spatially split scripts back into the exact single image', () => {
+    const source = blocks([2])[0] as Bitmap;
+    const result = convert(source, { mode: 'lossless', budget: 96, seed: 0 });
+    let operations = [] as Parameters<typeof render>[0];
+    for (const script of result.scripts) {
+      const execution = executeLua(script, { frameCount: 1 });
+      if (execution.skipped) return;
+      operations = [...operations, ...(execution.frames[0] ?? [])];
+    }
+    expect(render(operations, source.width, source.height).data).toEqual(source.data);
   });
 
   it('uses one script when the exact output fits, satisfying the minimal-count invariant', () => {
-    const result = convert(blocks([2])[0] as Bitmap, { mode: 'lossless', budget: 8192, seed: 0 });
-    expectLosslessContract(result);
+    const result = convert(blocks([2])[0] as Bitmap, { budget: 8192, seed: 0 });
+    expectLosslessContract(result, 8192);
     expect(result.scripts).toHaveLength(1);
     expect(result.totalCharCount).toBe(result.charCount);
   });

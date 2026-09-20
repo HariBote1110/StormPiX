@@ -21,39 +21,12 @@ function loadFrames(path: string): Bitmap[] {
   return frames;
 }
 
-function stormResult(frames: readonly Bitmap[], budget: number): ReturnType<typeof convertFrames> {
-  return convertFrames(frames, { budget, seed: 0, ticksPerFrame: 6, timeBudgetMs: STORM_TIME_BUDGET_MS });
+function stormResult(frames: readonly Bitmap[], budget: number, mode: 'lossless' | 'fit'): ReturnType<typeof convertFrames> {
+  return convertFrames(frames, { mode, budget, seed: 0, ticksPerFrame: 6, timeBudgetMs: STORM_TIME_BUDGET_MS });
 }
 
 function isLossless(result: ReturnType<typeof convertFrames>): boolean {
   return result.metrics.ssim >= 1 - 1e-12;
-}
-
-function findLosslessStorm(frames: readonly Bitmap[]): { readonly budget: number; readonly result: ReturnType<typeof convertFrames> } {
-  let lower = 0;
-  let upper = 256;
-  let result = stormResult(frames, upper);
-  while (!isLossless(result) && upper < 262144) {
-    lower = upper;
-    upper *= 2;
-    result = stormResult(frames, upper);
-  }
-  if (!isLossless(result)) throw new Error(`StormPiX did not reach mean SSIM 1.000000 by budget ${upper}`);
-  while (upper - lower > 1) {
-    const middle = Math.floor((lower + upper) / 2);
-    const middleResult = stormResult(frames, middle);
-    if (isLossless(middleResult)) {
-      upper = middle;
-      result = middleResult;
-    } else {
-      lower = middle;
-    }
-  }
-  return { budget: upper, result };
-}
-
-function formatStorm(result: ReturnType<typeof convertFrames>): string {
-  return `${result.charCount}\t${result.metrics.ssim.toFixed(6)}\t${result.strategy}`;
 }
 
 async function main(): Promise<void> {
@@ -99,33 +72,34 @@ async function main(): Promise<void> {
   console.log('gammaNote\tkamishibai applies its monitor gamma LUT; StormPiX does not. Compare each output against its own target, not emitted colour numbers.');
 
   console.log('\nAXIS A — equal fidelity (mean SSIM 1.000000)');
-  console.log('frames\tkamScripts\tkamChars\tkamLossless\tkamMismatches\tstormBudget\tstormChars\tratioKamOverStorm');
+  console.log('frames\tkamScripts\tkamChars\tkamLossless\tkamMismatches\tstormScripts\tstormChars\tstormSsim\tratioKamOverStorm');
   let firstKamishibaiFinding: { readonly frame: number; readonly pixel: number; readonly got: number; readonly expected: number } | undefined;
   for (const count of SUBSETS) {
     const frames = allFrames.slice(0, count);
     const kam = await compareKamishibai(frames, kamishibaiPath, 8192);
-    const storm = findLosslessStorm(frames);
+    const storm = stormResult(frames, 8192, 'lossless');
     firstKamishibaiFinding ??= kam.firstMismatch;
-    const ratio = kam.lossless ? (kam.charCount / storm.result.charCount).toFixed(3) : '-';
-    console.log(`${count}\t${kam.scriptCount}\t${kam.charCount}\t${kam.lossless}\t${kam.reconstructionMismatches}\t${storm.budget}\t${storm.result.charCount}\t${ratio}`);
+    if (!isLossless(storm)) throw new Error(`StormPiX lossless mode failed at ${count} frames: SSIM ${storm.metrics.ssim}`);
+    const ratio = kam.lossless ? (kam.charCount / storm.totalCharCount).toFixed(3) : '-';
+    console.log(`${count}\t${kam.scriptCount}\t${kam.charCount}\t${kam.lossless}\t${kam.reconstructionMismatches}\t${storm.scripts.length}\t${storm.totalCharCount}\t${storm.metrics.ssim.toFixed(6)}\t${ratio}`);
   }
   if (firstKamishibaiFinding) console.log(`kamishibaiFinding\tframe=${firstKamishibaiFinding.frame}\tpixel=${firstKamishibaiFinding.pixel}\tgotIndex=${firstKamishibaiFinding.got}\texpectedIndex=${firstKamishibaiFinding.expected}`);
 
-  console.log('\nAXIS B — one 8192-character StormPiX script');
+  console.log('\nAXIS B — one 8192-character StormPiX fit script');
   console.log('frames\tstormChars\tstormSsim\tstormStrategy\tkamScripts\tkamChars\tkamLossless\tkamMismatches');
   for (const count of SUBSETS) {
     const frames = allFrames.slice(0, count);
-    const storm = stormResult(frames, 8192);
+    const storm = stormResult(frames, 8192, 'fit');
     const kam = await compareKamishibai(frames, kamishibaiPath, 8192);
-    console.log(`${count}\t${formatStorm(storm)}\t${kam.scriptCount}\t${kam.charCount}\t${kam.lossless}\t${kam.reconstructionMismatches}`);
+    console.log(`${count}\t${storm.charCount}\t${storm.metrics.ssim.toFixed(6)}\t${storm.strategy}\t${kam.scriptCount}\t${kam.charCount}\t${kam.lossless}\t${kam.reconstructionMismatches}`);
   }
 
   const firstFrame = allFrames[0] as Bitmap;
-  const stormFirst = findLosslessStorm([firstFrame]);
+  const stormFirst = stormResult([firstFrame], 8192, 'lossless');
   const kamFirst = await compareKamishibai([firstFrame], kamishibaiPath, 8192);
   console.log('\nSINGLE FRAME — frame 0, lossless');
   console.log('tool\tchars\tssimOrLossless\tstrategyOrScripts');
-  console.log(`StormPiX\t${stormFirst.result.charCount}\t${stormFirst.result.metrics.ssim.toFixed(6)}\t${stormFirst.result.strategy}`);
+  console.log(`StormPiX\t${stormFirst.totalCharCount}\t${stormFirst.metrics.ssim.toFixed(6)}\t${stormFirst.scripts.length}`);
   console.log(`kamishibai\t${kamFirst.charCount}\t${kamFirst.lossless}\t${kamFirst.scriptCount}`);
   const kam4090 = await compareKamishibai(allFrames, kamishibaiPath, 4090);
   console.log(`\nFOOTNOTE\tkamishibai shipped default luaMaxLength=4090: scripts=${kam4090.scriptCount}, chars=${kam4090.charCount}, lossless=${kam4090.lossless}, haveOverRun=${kam4090.overrun}, haveColorDiv=${kam4090.colourDivided}`);

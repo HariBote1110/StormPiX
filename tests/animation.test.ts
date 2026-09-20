@@ -22,8 +22,8 @@ function luaAvailable(): boolean {
 describe('convertFrames', () => {
   it('is byte deterministic and reports exact character and budget invariants', () => {
     const frames = [solid(8, 8, 20, 30, 40), solid(8, 8, 40, 50, 60)];
-    const first = convertFrames(frames, { seed: 17, budget: 8192, ticksPerFrame: 3 });
-    const second = convertFrames(frames, { seed: 17, budget: 8192, ticksPerFrame: 3 });
+    const first = convertFrames(frames, { mode: 'fit', seed: 17, budget: 8192, ticksPerFrame: 3 });
+    const second = convertFrames(frames, { mode: 'fit', seed: 17, budget: 8192, ticksPerFrame: 3 });
 
     expect(second.lua).toBe(first.lua);
     expect(first.charCount).toBe(first.lua.length);
@@ -33,7 +33,7 @@ describe('convertFrames', () => {
   it('uses the first frame for the preview and averages metrics across frames', () => {
     const first = solid(16, 16, 20, 30, 40);
     const second = solid(16, 16, 240, 230, 220);
-    const result = convertFrames([first, second], { maxColours: 1, budget: 8192 });
+    const result = convertFrames([first, second], { mode: 'fit', maxColours: 1, budget: 8192 });
 
     expect(result.rendered.data[0]).toBe(130);
     expect(result.rendered.data[1]).toBe(130);
@@ -44,8 +44,8 @@ describe('convertFrames', () => {
 
   it('matches convert for a single-frame input', () => {
     const source = solid(12, 10, 80, 90, 100);
-    const single = convert(source, { seed: 4, budget: 8192, maxColours: 2 });
-    const animated = convertFrames([source], { seed: 4, budget: 8192, maxColours: 2, ticksPerFrame: 9 });
+    const single = convert(source, { mode: 'fit', seed: 4, budget: 8192, maxColours: 2 });
+    const animated = convertFrames([source], { mode: 'fit', seed: 4, budget: 8192, maxColours: 2, ticksPerFrame: 9 });
 
     expect(animated.lua).toBe(single.lua);
     expect(animated.charCount).toBe(single.charCount);
@@ -56,7 +56,7 @@ describe('convertFrames', () => {
 
   it('keeps the generated frame sequence identical across two complete cycles', () => {
     const frames = [solid(8, 8, 20, 30, 40), solid(8, 8, 40, 50, 60), solid(8, 8, 20, 30, 40)];
-    const result = convertFrames(frames, { budget: 8192, ticksPerFrame: 2 });
+    const result = convertFrames(frames, { mode: 'fit', budget: 8192, ticksPerFrame: 2 });
     const syntax = spawnSync('lua', ['-e', 'local f,e=load(io.read("*a"));assert(f,e)'], { input: result.lua, encoding: 'utf8' });
     if (syntax.error?.code === 'ENOENT' || !luaAvailable()) return;
     expect(syntax.status, syntax.stderr).toBe(0);
@@ -93,7 +93,7 @@ for index=1,frames do assert(snapshots[index] == snapshots[index+frames], "loop 
   });
 
   it('is syntactically valid Lua', () => {
-    const result = convertFrames([solid(4, 4, 20, 30, 40), solid(4, 4, 40, 50, 60)], { budget: 8192 });
+    const result = convertFrames([solid(4, 4, 20, 30, 40), solid(4, 4, 40, 50, 60)], { mode: 'fit', budget: 8192 });
     const parsed = spawnSync('lua', ['-e', 'local f,e=load(io.read("*a"));assert(f,e)'], { input: result.lua, encoding: 'utf8' });
     if (parsed.error?.code === 'ENOENT') return;
     expect(parsed.status, parsed.stderr).toBe(0);
