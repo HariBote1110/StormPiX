@@ -1,4 +1,5 @@
 import { render } from './render.ts';
+import { renderMonitor } from './gamma.ts';
 import type { Bitmap, DrawOp } from './types.ts';
 
 export interface LuaExecutor {
@@ -12,12 +13,12 @@ export interface LuaExecution {
 }
 
 /** Replay captured screen calls cumulatively, as the monitor does between frames. */
-export function replayLuaFrames(frames: readonly (readonly DrawOp[])[], width: number, height: number): Bitmap[] {
+export function replayLuaFrames(frames: readonly (readonly DrawOp[])[], width: number, height: number, gamma = false): Bitmap[] {
   const result: Bitmap[] = [];
   let operations: DrawOp[] = [];
   for (const frame of frames) {
     operations = [...operations, ...frame];
-    result.push(render(operations, width, height));
+    result.push(gamma ? renderMonitor(operations, width, height) : render(operations, width, height));
   }
   return result;
 }

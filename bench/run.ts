@@ -195,6 +195,14 @@ for (const [name, source] of fixtures()) {
   void psnr(source, result.rendered);
 }
 
+console.log('\nMONITOR GAMMA (lossless)');
+console.log('image\tgammaOffChars\tgammaOnChars\tscripts\tencodingSsim\tdeviceMaxAbs\tdeviceMeanAbs');
+for (const [name, source] of fixtures()) {
+  const gammaOff = convert(source, { mode: 'lossless', budget: BUDGET, seed: 0, timeBudgetMs: 5000 });
+  const gammaOn = convert(source, { mode: 'lossless', gamma: true, budget: BUDGET, seed: 0, timeBudgetMs: 5000 });
+  console.log(`${name}\t${gammaOff.totalCharCount}\t${gammaOn.totalCharCount}\t${gammaOn.scripts.length}\t${gammaOn.metrics.ssim.toFixed(6)}\t${gammaOn.stats.deviceMaxAbsChannelDeviation ?? '-'}\t${(gammaOn.stats.deviceMeanAbsChannelDeviation ?? 0).toFixed(6)}`);
+}
+
 const photo = fixtures().find(([name]) => name === 'photo-96')?.[1];
 if (photo) {
   console.log('\nBUDGET SWEEP (photo-96)');
@@ -281,4 +289,8 @@ if (!existsSync(REAL_ASSET_PATH)) {
     console.log('entries\tpatternChars\tsyntaxChars\trunKinds\trunPoolChars\tusedOnce\tusedTwice\tusedOncePatternChars\tusedTwicePatternChars');
     console.log(`${breakdown.dictionaryEntries}\t${breakdown.dictionaryPatternChars}\t${breakdown.dictionarySyntaxChars}\t${breakdown.dictionaryRunKinds}\t${breakdown.dictionaryRunPoolChars}\t${breakdown.dictionaryUsedOnce}\t${breakdown.dictionaryUsedTwice}\t${breakdown.dictionaryUsedOncePatternChars}\t${breakdown.dictionaryUsedTwicePatternChars}`);
   }
+  const gammaOn = convertFrames(realFrames, { mode: 'lossless', gamma: true, budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
+  console.log('\nREAL ASSET MONITOR GAMMA (40 frames, lossless)');
+  console.log('gammaOffChars\tgammaOnChars\tscripts\tencodingSsim\tdeviceMaxAbs\tdeviceMeanAbs');
+  console.log(`${fullLossless?.totalCharCount ?? '-'}\t${gammaOn.totalCharCount}\t${gammaOn.scripts.length}\t${gammaOn.metrics.ssim.toFixed(6)}\t${gammaOn.stats.deviceMaxAbsChannelDeviation ?? '-'}\t${(gammaOn.stats.deviceMeanAbsChannelDeviation ?? 0).toFixed(6)}`);
 }

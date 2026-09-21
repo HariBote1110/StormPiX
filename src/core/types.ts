@@ -16,6 +16,7 @@ export type EmitStrategy = 'direct' | 'table' | 'packed';
 export type ConvertMode = 'lossless' | 'fit';
 
 export interface ConvertOptions {
+  readonly gamma?: boolean;
   readonly mode?: ConvertMode;
   readonly budget?: number;
   readonly maxColours?: number;
@@ -43,6 +44,8 @@ export interface ConvertStats {
   /** True when the safety time cap stopped deterministic work early. */
   readonly timeBudgetTruncated?: boolean;
   readonly scriptFrameRanges?: readonly (readonly [number, number])[];
+  readonly deviceMaxAbsChannelDeviation?: number;
+  readonly deviceMeanAbsChannelDeviation?: number;
 }
 
 export interface ConvertResult {

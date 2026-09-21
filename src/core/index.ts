@@ -19,5 +19,6 @@ export { blockify, quantise, rgbToOklab } from './quantise.ts';
 export { CIRCLE_SEGMENT_TABLE, floorCoord, floor_coord, render, renderWithMask } from './render.ts';
 export type { RenderedWithMask } from './render.ts';
 export { replayLuaFrames } from './lua.ts';
+export { MONITOR_DISPLAY_LUT, monitorDeviceTarget, monitorInputForDisplayed, renderMonitor } from './gamma.ts';
 export type { LuaExecution, LuaExecutor } from './lua.ts';
 export { psnr, psnrMasked, psnrWithMask, rmse, ssim, ssimMasked, ssimWithMask } from './metrics.ts';

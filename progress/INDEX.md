@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `monitor-gamma.md` — 交換可能なモニターLUT、device target、符号化誤差とdevice errorの分離
 - `run-token-dictionary.md` — 列パターン内の縦runを第2辞書化し、実資産40フレームを5,895文字へ圧縮
 - `reference-stream-rle.md` — 列辞書の隣接参照を可逆RLE化し、実資産40フレームを6,958文字へ圧縮
 - `repeated-pattern-dictionary.md` — 実資産の列反復を縦ラン辞書で共有し、losslessアニメーションを単一スクリプト化

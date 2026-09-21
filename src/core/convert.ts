@@ -4,6 +4,7 @@ import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
 import { render } from './render.ts';
+import { monitorDeviceTarget, monitorInputOps, monitorInputPalette, renderMonitor } from './gamma.ts';
 import type { Bitmap, ConvertOptions, ConvertResult, DrawOp, EmitStrategy, QualityMetrics, Rgb } from './types.ts';
 
 const DEFAULT_BUDGET = 8192;
@@ -248,15 +249,18 @@ function losslessResult(
   strategies: readonly EmitStrategy[],
   budget: number,
   started: number,
+  gamma = false,
 ): ConvertResult {
-  const rendered = render(ops, source.width, source.height);
+  const emittedOps = gamma ? monitorInputOps(ops) : [...ops];
+  const emittedPalette = gamma ? monitorInputPalette(palette) : palette;
+  const rendered = gamma ? renderMonitor(emittedOps, source.width, source.height) : render(emittedOps, source.width, source.height);
   const metrics = { ssim: ssim(source, rendered), psnr: psnr(source, rendered), rmse: rmse(source, rendered) };
-  const emitted = strategies.map((strategy) => ({ strategy, lua: emitLua(ops, strategy) })).sort((left, right) => left.lua.length - right.lua.length);
-  const shortest = emitted[0] ?? { strategy: 'direct' as const, lua: emitLua(ops, 'direct') };
-  const split = shortest.lua.length <= budget ? { scripts: [shortest.lua], strategy: shortest.strategy } : splitLosslessOps(ops, budget, strategies);
+  const emitted = strategies.map((strategy) => ({ strategy, lua: emitLua(emittedOps, strategy) })).sort((left, right) => left.lua.length - right.lua.length);
+  const shortest = emitted[0] ?? { strategy: 'direct' as const, lua: emitLua(emittedOps, 'direct') };
+  const split = shortest.lua.length <= budget ? { scripts: [shortest.lua], strategy: shortest.strategy } : splitLosslessOps(emittedOps, budget, strategies);
   const scripts = split.scripts.length > 0 ? split.scripts : [shortest.lua];
   const lua = scripts[0] as string;
-  const allOps = ops;
+  const allOps = emittedOps;
   return {
     lua,
     scripts,
@@ -264,7 +268,7 @@ function losslessResult(
     charCount: lua.length,
     withinBudget: scripts.every((script) => script.length <= budget),
     strategy: split.strategy,
-    palette,
+    palette: emittedPalette,
     rendered,
     metrics,
     stats: {
@@ -281,7 +285,7 @@ function convertLossless(source: Bitmap, options: ConvertOptions, started: numbe
   const budget = options.budget ?? DEFAULT_BUDGET;
   const exact = exactLabels(source);
   const ops = orderOps(cover({ width: source.width, height: source.height, indices: exact.indices }, exact.palette));
-  return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started);
+  return losslessResult(source, exact.palette, ops, options.strategies && options.strategies.length > 0 ? options.strategies : ALL_STRATEGIES, budget, started, options.gamma === true);
 }
 
 function losslessSingleScriptForFit(result: ConvertResult, budget: number, started: number): ConvertResult | undefined {
@@ -549,6 +553,11 @@ function evaluateAnimation(
 /** Convert one bitmap by maximising measured SSIM among candidates that fit the character budget. */
 export function convert(source: Bitmap, options: ConvertOptions = {}): ConvertResult {
   const started = performance.now();
+  if (options.gamma === true) {
+    const device = monitorDeviceTarget(source);
+    const result = convertLossless(device.bitmap, options, started);
+    return { ...result, stats: { ...result.stats, deviceMaxAbsChannelDeviation: device.maxAbsChannelDeviation, deviceMeanAbsChannelDeviation: device.meanAbsChannelDeviation } };
+  }
   if ((options.mode ?? 'lossless') === 'lossless') return convertLossless(source, options, started);
   const budget = options.budget ?? DEFAULT_BUDGET;
   if (canUseLosslessFitCandidate(options)) {
@@ -638,10 +647,19 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
   const exact = exactLabelsFrames(frames);
   const prepared = prepareAnimation(frames, exact.palette, exact.indices);
   const colours = exact.palette.map((colour) => colour.join(','));
-  const split = splitLosslessAnimation(prepared.fullOps, prepared.diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, colours);
-  const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(prepared.fullOps, ticksPerFrame)];
+  const fullOps = options.gamma === true ? prepared.fullOps.map((ops) => monitorInputOps(ops)) : prepared.fullOps;
+  const diffOps = options.gamma === true ? prepared.diffOps.map((ops) => monitorInputOps(ops)) : prepared.diffOps;
+  const emittedColours = options.gamma === true ? monitorInputPalette(exact.palette).map((colour) => colour.join(',')) : colours;
+  const split = splitLosslessAnimation(fullOps, diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, emittedColours);
+  const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(fullOps, ticksPerFrame)];
   const lua = scripts[0] as string;
-  const allOps = prepared.fullOps.flat();
+  const allOps = fullOps.flat();
+  const renderedFrames = fullOps.map((ops, index) => options.gamma === true ? renderMonitor(ops, frames[index]?.width ?? 0, frames[index]?.height ?? 0) : render(ops, frames[index]?.width ?? 0, frames[index]?.height ?? 0));
+  const metrics: QualityMetrics = {
+    ssim: renderedFrames.reduce((sum, rendered, index) => sum + ssim(frames[index] as Bitmap, rendered), 0) / frames.length,
+    psnr: renderedFrames.reduce((sum, rendered, index) => sum + psnr(frames[index] as Bitmap, rendered), 0) / frames.length,
+    rmse: renderedFrames.reduce((sum, rendered, index) => sum + rmse(frames[index] as Bitmap, rendered), 0) / frames.length,
+  };
   return {
     lua,
     scripts,
@@ -649,18 +667,18 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
     charCount: lua.length,
     withinBudget: scripts.every((script) => script.length <= budget),
     strategy: 'direct',
-    palette: exact.palette,
-    rendered: prepared.rendered,
-    metrics: prepared.metrics,
+    palette: options.gamma === true ? monitorInputPalette(exact.palette) : exact.palette,
+    rendered: renderedFrames[0] as Bitmap,
+    metrics,
     stats: {
       ops: allOps.length,
       setColourCalls: allOps.filter((op) => op.type === 'setColour').length,
       rects: allOps.filter((op) => op.type === 'rectF').length,
       elapsedMs: performance.now() - started,
       frameCount: frames.length,
-      frameOps: prepared.fullOps.map((ops) => ops.length),
+      frameOps: fullOps.map((ops) => ops.length),
       encoding: split.encoding,
-      fullFrameChars: Math.min(emitAnimationLuaCompact(prepared.fullOps, ticksPerFrame).length, emitAnimationLuaCompactRectangles(prepared.fullOps, colours, ticksPerFrame).length),
+      fullFrameChars: Math.min(emitAnimationLuaCompact(fullOps, ticksPerFrame).length, emitAnimationLuaCompactRectangles(fullOps, emittedColours, ticksPerFrame).length),
       scriptFrameRanges: split.ranges,
       timeBudgetTruncated: false,
     },
@@ -680,6 +698,18 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const height = frames[0]?.height ?? 0;
   if (frames.some((frame) => frame.width !== width || frame.height !== height)) throw new RangeError('Animation frames must have matching dimensions');
   const started = performance.now();
+  if (options.gamma === true) {
+    const devices = frames.map(monitorDeviceTarget);
+    const result = convertFramesLossless(devices.map((device) => device.bitmap), options, started);
+    return {
+      ...result,
+      stats: {
+        ...result.stats,
+        deviceMaxAbsChannelDeviation: Math.max(...devices.map((device) => device.maxAbsChannelDeviation)),
+        deviceMeanAbsChannelDeviation: devices.reduce((sum, device) => sum + device.meanAbsChannelDeviation, 0) / devices.length,
+      },
+    };
+  }
   if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
 
   const budget = options.budget ?? DEFAULT_BUDGET;
