@@ -25,13 +25,38 @@ function dictionaryCharacterBreakdown(lua: string): Readonly<Record<string, numb
   const alphabet = [...lua.matchAll(/[AHM]="[^"]*"/g)].reduce((total, match) => total + (match[0]?.length ?? 0), 0);
   const palette = lua.match(/p=\{.*?\} q=\{/);
   const dictionary = lua.match(/q=\{.*?\}F=S\.drawRectF/);
+  const runPool = lua.match(/B="([^"]*)"/);
   const firstReference = lua.indexOf('function onDraw()');
-  if (!palette || !dictionary || firstReference < 0) return undefined;
-  const referenceStreams = [...lua.slice(firstReference).matchAll(/D\("([^"]*)"\)/g)]
-    .reduce((total, match) => total + (match[0]?.length ?? 0), 0);
+  if (!palette || !dictionary || !runPool || firstReference < 0) return undefined;
+  const patterns = [...(dictionary[0]?.matchAll(/"([^"]*)"/g) ?? [])].map((match) => match[1] ?? '');
+  const alphabetText = lua.match(/A="([^"]*)"/)?.[1] ?? '';
+  const highAlphabet = lua.match(/H="([^"]*)"/)?.[1] ?? '';
+  const references = [...lua.slice(firstReference).matchAll(/D\("([^"]*)"\)/g)];
+  const referenceStreams = references.reduce((total, match) => total + (match[0]?.length ?? 0), 0);
+  const uses = new Array<number>(patterns.length).fill(0);
+  for (const reference of references) {
+    const data = reference[1] ?? '';
+    for (let offset = 0; offset < data.length;) {
+      const first = data[offset] ?? '';
+      let index = alphabetText.indexOf(first);
+      if (index < 0) {
+        index = alphabetText.length + highAlphabet.indexOf(first) * alphabetText.length + alphabetText.indexOf(data[offset + 1] ?? '');
+        offset += 1;
+      }
+      offset += 1;
+      let count = 1;
+      if (data[offset] === '!') {
+        count = alphabetText.indexOf(data[offset + 1] ?? '') + 1;
+        offset += 2;
+      }
+      uses[index] = (uses[index] ?? 0) + count;
+    }
+  }
   const prefix = lua.slice(0, firstReference);
   const paletteChars = (palette[0]?.length ?? 0) - 4;
-  const dictionaryChars = (dictionary[0]?.length ?? 0) - 'F=S.drawRectF'.length;
+  const runPoolChars = runPool[0]?.length ?? 0;
+  const encodedPatternChars = patterns.reduce((total, pattern) => total + pattern.length, 0);
+  const dictionaryChars = (dictionary[0]?.length ?? 0) - 'F=S.drawRectF'.length + runPoolChars;
   const helpers = prefix.length - alphabet - paletteChars - dictionaryChars;
   const playback = lua.length - prefix.length - referenceStreams;
   return {
@@ -42,6 +67,15 @@ function dictionaryCharacterBreakdown(lua: string): Readonly<Record<string, numb
     referenceStreams,
     helpers,
     playback,
+    dictionaryEntries: patterns.length,
+    dictionaryPatternChars: encodedPatternChars,
+    dictionarySyntaxChars: dictionaryChars - runPoolChars - encodedPatternChars,
+    dictionaryRunKinds: (runPool[1]?.length ?? 0) / 2,
+    dictionaryRunPoolChars: runPoolChars,
+    dictionaryUsedOnce: uses.filter((count) => count === 1).length,
+    dictionaryUsedTwice: uses.filter((count) => count === 2).length,
+    dictionaryUsedOncePatternChars: patterns.reduce((total, pattern, index) => total + (uses[index] === 1 ? pattern.length : 0), 0),
+    dictionaryUsedTwicePatternChars: patterns.reduce((total, pattern, index) => total + (uses[index] === 2 ? pattern.length : 0), 0),
   };
 }
 
@@ -243,5 +277,8 @@ if (!existsSync(REAL_ASSET_PATH)) {
     console.log('\nREAL ASSET CHARACTER BREAKDOWN (40 frames, lossless)');
     console.log('total\talphabet\tpalette\tdictionary\treferenceStreams\thelpers\tplayback');
     console.log(`${breakdown.total}\t${breakdown.alphabet}\t${breakdown.palette}\t${breakdown.dictionary}\t${breakdown.referenceStreams}\t${breakdown.helpers}\t${breakdown.playback}`);
+    console.log('DICTIONARY INTERNAL COMPOSITION');
+    console.log('entries\tpatternChars\tsyntaxChars\trunKinds\trunPoolChars\tusedOnce\tusedTwice\tusedOncePatternChars\tusedTwicePatternChars');
+    console.log(`${breakdown.dictionaryEntries}\t${breakdown.dictionaryPatternChars}\t${breakdown.dictionarySyntaxChars}\t${breakdown.dictionaryRunKinds}\t${breakdown.dictionaryRunPoolChars}\t${breakdown.dictionaryUsedOnce}\t${breakdown.dictionaryUsedTwice}\t${breakdown.dictionaryUsedOncePatternChars}\t${breakdown.dictionaryUsedTwicePatternChars}`);
   }
 }

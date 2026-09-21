@@ -109,7 +109,7 @@ describe('Phase 5 lossless output', () => {
 
     expect(result.metrics.ssim).toBe(1);
     expect(result.scripts).toHaveLength(1);
-    expect(result.totalCharCount).toBeLessThan(7979);
+    expect(result.totalCharCount).toBeLessThan(6958);
     for (let scriptIndex = 0; scriptIndex < result.scripts.length; scriptIndex += 1) {
       const range = result.stats.scriptFrameRanges?.[scriptIndex];
       expect(range).toBeDefined();

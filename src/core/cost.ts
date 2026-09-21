@@ -389,6 +389,17 @@ function columnReference(index: number): string {
   return prefix && suffix ? `${prefix}${suffix}` : '';
 }
 
+function runReference(index: number): string {
+  if (index < COMPACT_RECT_ALPHABET.length) return COMPACT_RECT_ALPHABET[index] as string;
+  return COLUMN_DICTIONARY_HIGH_ALPHABET[index - COMPACT_RECT_ALPHABET.length] ?? '';
+}
+
+function encodeRunPattern(pattern: string, indexes: ReadonlyMap<string, number>): string {
+  let result = '';
+  for (let offset = 0; offset < pattern.length; offset += 2) result += runReference(indexes.get(pattern.slice(offset, offset + 2)) as number);
+  return result;
+}
+
 function encodeColumnReferences(keys: readonly string[], indexes: ReadonlyMap<string, number>): string {
   let result = '';
   for (let start = 0; start < keys.length;) {
@@ -432,8 +443,19 @@ export function emitAnimationLuaColumnDictionary(
     return frequencyDifference !== 0 ? frequencyDifference : left.localeCompare(right);
   });
   const indexes = new Map(orderedKeys.map((key, index) => [key, index] as const));
-  const patterns = orderedKeys.map((key) => encodeColumnPattern(key.split(',').map(Number), colours.length));
-  if (patterns.some((pattern) => pattern === '') || orderedKeys.some((_, index) => columnReference(index) === '')) return '';
+  const rawPatterns = orderedKeys.map((key) => encodeColumnPattern(key.split(',').map(Number), colours.length));
+  const runFrequencies = new Map<string, number>();
+  for (const pattern of rawPatterns) for (let offset = 0; offset < pattern.length; offset += 2) {
+    const run = pattern.slice(offset, offset + 2);
+    runFrequencies.set(run, (runFrequencies.get(run) ?? 0) + 1);
+  }
+  const runs = [...runFrequencies.keys()].sort((left, right) => {
+    const frequencyDifference = (runFrequencies.get(right) ?? 0) - (runFrequencies.get(left) ?? 0);
+    return frequencyDifference !== 0 ? frequencyDifference : left.localeCompare(right);
+  });
+  const runIndexes = new Map(runs.map((run, index) => [run, index] as const));
+  const patterns = rawPatterns.map((pattern) => encodeRunPattern(pattern, runIndexes));
+  if (patterns.some((pattern) => pattern === '') || orderedKeys.some((_, index) => columnReference(index) === '') || runs.some((_, index) => runReference(index) === '')) return '';
   const data = frameKeys.map((keys) => encodeColumnReferences(keys, indexes));
   const greyscale = colours.every((value) => {
     const channels = value.split(',');
@@ -443,7 +465,7 @@ export function emitAnimationLuaColumnDictionary(
     ? `p={${colours.map((colour) => colour.split(',')[0]).join(',')}`
     : `p={${colours.map((colour) => `{${colour}}`).join(',')}`;
   const colour = greyscale ? 'S.setColor(e,e,e)' : 'S.setColor(e[1],e[2],e[3])';
-  const prefix = `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" ${palette}} q={${patterns.map((pattern) => `"${pattern}"`).join(',')} }F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=string.sub(d,i,i)local n=string.find(A,z,1,true)if n then n=n-1 else local h=string.find(H,z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+string.find(A,string.sub(d,i+1,i+1),1,true)-1 i=i+1 end i=i+1 local k=1 if string.sub(d,i,i)==M then k=string.find(A,string.sub(d,i+1,i+1),1,true)i=i+2 end local s=q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local v=(string.find(A,string.sub(s,j,j),1,true)-1)*64+string.find(A,string.sub(s,j+1,j+1),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+2 end x=x+1 end end end `;
+  const prefix = `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" B="${runs.join('')}" ${palette}} q={${patterns.map((pattern) => `"${pattern}"`).join(',')} }F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=string.sub(d,i,i)local n=string.find(A,z,1,true)if n then n=n-1 else local h=string.find(H,z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+string.find(A,string.sub(d,i+1,i+1),1,true)-1 i=i+1 end i=i+1 local k=1 if string.sub(d,i,i)==M then k=string.find(A,string.sub(d,i+1,i+1),1,true)i=i+2 end local s=q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local z=string.sub(s,j,j)local u=string.find(A,z,1,true)if u then u=u-1 else u=${COMPACT_RECT_ALPHABET.length}+string.find(H,z,1,true)-1 end local v=(string.find(A,string.sub(B,u*2+1,u*2+1),1,true)-1)*64+string.find(A,string.sub(B,u*2+2,u*2+2),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+1 end x=x+1 end end end `;
   const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then D("${value}")`).join('');
   return `${prefix}${compactAnimationTick(ticksPerFrame, frameIndices.length)}function onDraw()${branches}end end`;
 }
