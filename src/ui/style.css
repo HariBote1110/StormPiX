@@ -447,6 +447,15 @@ select {
   margin-bottom: var(--space-3);
 }
 
+.code-summary p {
+  margin: 0;
+}
+
+.code-summary-notice {
+  color: var(--colour-danger);
+  font-weight: 600;
+}
+
 .code-scripts {
   display: flex;
   flex-direction: column;

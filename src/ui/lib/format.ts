@@ -27,8 +27,12 @@ export function totalChars(scripts: readonly string[]): number {
   return scripts.reduce((n, s) => n + s.length, 0);
 }
 
-/** Formats a frame range (inclusive, 0-indexed) as a human label, e.g. "0–5" or "3". */
+/**
+ * Formats a half-open frame range `[start, end)` (as `stats.scriptFrameRanges` uses) as a
+ * human label with an inclusive-looking endpoint, e.g. [0,8) -> "0–7", [0,1) -> "0".
+ */
 export function formatFrameRange(range: readonly [number, number]): string {
   const [start, end] = range;
-  return start === end ? `${start}` : `${start}–${end}`;
+  const lastFrame = end - 1;
+  return lastFrame <= start ? `${start}` : `${start}–${lastFrame}`;
 }

@@ -33,8 +33,18 @@ function render(summary: HTMLElement, list: HTMLElement, state: AppState): void 
   const scripts = result.scripts;
   const ranges = result.stats.scriptFrameRanges;
 
-  if (scripts.length > 1) {
-    summary.textContent = `合計 ${totalChars(scripts).toLocaleString()} 文字を ${scripts.length} 本のスクリプトに分割しました。各スクリプトは個別のマイクロコントローラーに書き込んでください。`;
+  if (!result.withinBudget) {
+    const notice = document.createElement('p');
+    notice.className = 'code-summary-notice';
+    notice.textContent =
+      scripts.length > 1
+        ? `文字数予算が小さすぎるため、${scripts.length} 本に分割してもどのスクリプトも予算に収まりませんでした。予算を上げるか、変換モードを「フィット」に切り替えて1本に収める（画質は落ちます）ことを検討してください。`
+        : '文字数予算に収まりませんでした。予算を上げるか、変換モードを「フィット」に切り替えて画質を落として収めることを検討してください。';
+    summary.append(notice);
+  } else if (scripts.length > 1) {
+    const info = document.createElement('p');
+    info.textContent = `合計 ${totalChars(scripts).toLocaleString()} 文字を ${scripts.length} 本のスクリプトに分割しました。各スクリプトは個別のマイクロコントローラーに書き込んでください。`;
+    summary.append(info);
   }
 
   scripts.forEach((script, index) => {
