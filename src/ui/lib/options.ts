@@ -1,4 +1,4 @@
-import type { ConvertOptions, EmitStrategy } from '../../core/index.ts';
+import type { ConvertMode, ConvertOptions, EmitStrategy } from '../../core/index.ts';
 
 /** UI-level emit strategy choice: 'auto' means "let the core try everything". */
 export type EmitChoice = 'auto' | EmitStrategy;
@@ -9,6 +9,8 @@ export interface UiConvertOptions {
   readonly dither: 'none' | 'floyd-steinberg';
   readonly strategy: EmitChoice;
   readonly timeBudgetMs: number;
+  /** 既定は 'lossless'（コアの既定値と一致させる） */
+  readonly mode: ConvertMode;
 }
 
 export const DEFAULT_OPTIONS: UiConvertOptions = {
@@ -17,6 +19,7 @@ export const DEFAULT_OPTIONS: UiConvertOptions = {
   dither: 'none',
   strategy: 'auto',
   timeBudgetMs: 5000,
+  mode: 'lossless',
 };
 
 const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
@@ -29,7 +32,8 @@ export function normaliseOptions(raw: Partial<UiConvertOptions>): UiConvertOptio
   const dither = raw.dither === 'floyd-steinberg' ? 'floyd-steinberg' : 'none';
   const strategy: EmitChoice =
     raw.strategy === 'direct' || raw.strategy === 'table' || raw.strategy === 'packed' ? raw.strategy : 'auto';
-  return { budget, maxColours, dither, strategy, timeBudgetMs };
+  const mode: ConvertMode = raw.mode === 'fit' ? 'fit' : 'lossless';
+  return { budget, maxColours, dither, strategy, timeBudgetMs, mode };
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -45,6 +49,7 @@ export function toConvertOptions(ui: UiConvertOptions, seed = 0): ConvertOptions
     dither: ui.dither,
     strategies: ui.strategy === 'auto' ? ALL_STRATEGIES : [ui.strategy],
     timeBudgetMs: ui.timeBudgetMs,
+    mode: ui.mode,
     seed,
   };
 }

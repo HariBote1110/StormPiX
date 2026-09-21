@@ -9,6 +9,7 @@ describe('normaliseOptions', () => {
       dither: 'none',
       strategy: 'auto',
       timeBudgetMs: 5000,
+      mode: 'lossless',
     });
   });
 
@@ -29,6 +30,16 @@ describe('normaliseOptions', () => {
     // @ts-expect-error deliberately invalid input from an untyped source
     expect(normaliseOptions({ strategy: 'bogus' }).strategy).toBe('auto');
   });
+
+  it('defaults mode to lossless', () => {
+    expect(normaliseOptions({}).mode).toBe('lossless');
+  });
+
+  it('accepts fit mode and rejects an unknown mode back to lossless', () => {
+    expect(normaliseOptions({ mode: 'fit' }).mode).toBe('fit');
+    // @ts-expect-error deliberately invalid input from an untyped source
+    expect(normaliseOptions({ mode: 'bogus' }).mode).toBe('lossless');
+  });
 });
 
 describe('toConvertOptions', () => {
@@ -40,5 +51,10 @@ describe('toConvertOptions', () => {
   it('keeps a concrete strategy as a single-element list', () => {
     const opts = toConvertOptions(normaliseOptions({ strategy: 'packed' }));
     expect(opts.strategies).toEqual(['packed']);
+  });
+
+  it('passes the mode through unchanged', () => {
+    expect(toConvertOptions(normaliseOptions({ mode: 'fit' })).mode).toBe('fit');
+    expect(toConvertOptions(normaliseOptions({})).mode).toBe('lossless');
   });
 });

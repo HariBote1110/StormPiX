@@ -336,6 +336,10 @@ select {
   margin: var(--space-3) 0;
 }
 
+.budget-gauge-row + .budget-gauge-row {
+  margin-top: var(--space-2);
+}
+
 .budget-gauge .bar-track {
   height: 20px;
   background: var(--colour-surface-alt);
@@ -351,7 +355,7 @@ select {
   transition: width 0.2s ease, background-color 0.2s ease;
 }
 
-.budget-gauge.over .bar-fill {
+.budget-gauge .bar-fill.over {
   background: var(--colour-danger);
 }
 
@@ -364,8 +368,13 @@ select {
 }
 
 .budget-gauge.over .bar-label {
-  color: var(--colour-danger);
-  font-weight: bold;
+  color: var(--colour-text-dim);
+}
+
+.budget-gauge .bar-total {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  color: var(--colour-text-dim);
 }
 
 .stats-grid {
@@ -427,8 +436,38 @@ select {
 .code-output .code-toolbar {
   display: flex;
   align-items: center;
+  gap: var(--space-3);
   justify-content: space-between;
   margin-bottom: var(--space-2);
+}
+
+.code-summary {
+  font-size: 12px;
+  color: var(--colour-text-dim);
+  margin-bottom: var(--space-3);
+}
+
+.code-scripts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.code-block-title {
+  font-weight: 600;
+  font-size: 12px;
+  margin-right: auto;
+}
+
+.code-char-count {
+  font-size: 12px;
+  color: var(--colour-text-dim);
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--colour-text-dim);
+  margin: var(--space-1) 0 0;
 }
 
 .empty-state {
