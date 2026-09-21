@@ -21,6 +21,30 @@ const BUDGET = 8192;
 const BUDGET_SWEEP = [60, 100, 200, 300, 500, 1000, 2000, 4000, 8192] as const;
 const DENSE_BUDGET_SWEEP = [...Array.from({ length: Math.floor((8100 - 500) / 100) + 1 }, (_, index) => 500 + index * 100), 8192];
 
+function dictionaryCharacterBreakdown(lua: string): Readonly<Record<string, number>> | undefined {
+  const alphabet = [...lua.matchAll(/[AHM]="[^"]*"/g)].reduce((total, match) => total + (match[0]?.length ?? 0), 0);
+  const palette = lua.match(/p=\{.*?\} q=\{/);
+  const dictionary = lua.match(/q=\{.*?\}F=S\.drawRectF/);
+  const firstReference = lua.indexOf('function onDraw()');
+  if (!palette || !dictionary || firstReference < 0) return undefined;
+  const referenceStreams = [...lua.slice(firstReference).matchAll(/D\("([^"]*)"\)/g)]
+    .reduce((total, match) => total + (match[0]?.length ?? 0), 0);
+  const prefix = lua.slice(0, firstReference);
+  const paletteChars = (palette[0]?.length ?? 0) - 4;
+  const dictionaryChars = (dictionary[0]?.length ?? 0) - 'F=S.drawRectF'.length;
+  const helpers = prefix.length - alphabet - paletteChars - dictionaryChars;
+  const playback = lua.length - prefix.length - referenceStreams;
+  return {
+    total: lua.length,
+    alphabet,
+    palette: paletteChars,
+    dictionary: dictionaryChars,
+    referenceStreams,
+    helpers,
+    playback,
+  };
+}
+
 function bitmapFromPixels(width: number, height: number, colourAt: (x: number, y: number) => Rgb): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
@@ -206,10 +230,18 @@ if (!existsSync(REAL_ASSET_PATH)) {
   const realFrames = names.map((name) => readPng(`${REAL_ASSET_PATH}/${name}`));
   console.log('\nREAL ASSET (/Users/yuki/doc/al/pngX)');
   console.log('frames\tlosslessChars\tlosslessScripts\tlosslessSsim\tfitChars\tfitSsim\tfitStrategy');
+  let fullLossless: ReturnType<typeof convertFrames> | undefined;
   for (const frameCount of [4, 8, 16, 24, 40] as const) {
     const subset = realFrames.slice(0, frameCount);
     const lossless = convertFrames(subset, { mode: 'lossless', budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
     const fit = convertFrames(subset, { mode: 'fit', budget: 8192, seed: 0, ticksPerFrame: 6, timeBudgetMs: 5000 });
     console.log(`${frameCount}\t${lossless.totalCharCount}\t${lossless.scripts.length}\t${lossless.metrics.ssim.toFixed(6)}\t${fit.charCount}\t${fit.metrics.ssim.toFixed(6)}\t${fit.strategy}`);
+    if (frameCount === 40) fullLossless = lossless;
+  }
+  const breakdown = fullLossless ? dictionaryCharacterBreakdown(fullLossless.lua) : undefined;
+  if (breakdown) {
+    console.log('\nREAL ASSET CHARACTER BREAKDOWN (40 frames, lossless)');
+    console.log('total\talphabet\tpalette\tdictionary\treferenceStreams\thelpers\tplayback');
+    console.log(`${breakdown.total}\t${breakdown.alphabet}\t${breakdown.palette}\t${breakdown.dictionary}\t${breakdown.referenceStreams}\t${breakdown.helpers}\t${breakdown.playback}`);
   }
 }

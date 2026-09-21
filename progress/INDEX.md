@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `reference-stream-rle.md` — 列辞書の隣接参照を可逆RLE化し、実資産40フレームを6,958文字へ圧縮
 - `repeated-pattern-dictionary.md` — 実資産の列反復を縦ラン辞書で共有し、losslessアニメーションを単一スクリプト化
 - `fit-lossless-dominance.md` — fitが予算内のlossless単一スクリプト候補を優先する決定
 - `phase5-lossless-scripts.md` — lossless既定、可逆スクリプト分割、矩形ストリーム圧縮、kamishibai比較
