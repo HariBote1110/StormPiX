@@ -12,7 +12,7 @@ function parseFrame(line: string): DrawOp[] {
   if (line.length === 0) return [];
   const ops: DrawOp[] = [];
   for (const encoded of line.split('\u001e')) {
-    const fields = encoded.split('|');
+    const fields = encoded.split('\u001f');
     const name = fields.shift();
     const values = fields.map(numberOrText);
     if (name === 'setColor' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'number') ops.push({ type: 'setColour', r: values[0], g: values[1], b: values[2], ...(typeof values[3] === 'number' ? { a: values[3] } : {}) });
@@ -23,8 +23,8 @@ function parseFrame(line: string): DrawOp[] {
     else if (name === 'drawTriangleF' && values.every((value) => typeof value === 'number')) ops.push({ type: 'triangleF', x1: values[0] as number, y1: values[1] as number, x2: values[2] as number, y2: values[3] as number, x3: values[4] as number, y3: values[5] as number });
     else if (name === 'drawCircle' && values.every((value) => typeof value === 'number')) ops.push({ type: 'circle', x: values[0] as number, y: values[1] as number, radius: values[2] as number });
     else if (name === 'drawCircleF' && values.every((value) => typeof value === 'number')) ops.push({ type: 'circleF', x: values[0] as number, y: values[1] as number, radius: values[2] as number });
-    else if (name === 'drawText' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'string') ops.push({ type: 'text', x: values[0], y: values[1], text: values[2].replace(/\\\\n/g, '\n') });
-    else if (name === 'drawTextBox' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'number' && typeof values[3] === 'number' && typeof values[4] === 'string' && typeof values[5] === 'number' && typeof values[6] === 'number') ops.push({ type: 'textBox', x: values[0], y: values[1], w: values[2], h: values[3], text: values[4].replace(/\\\\n/g, '\n'), horizontalAlign: values[5], verticalAlign: values[6] });
+    else if (name === 'drawText' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'string') ops.push({ type: 'text', x: values[0], y: values[1], text: values[2].replace(/\\n/g, '\n') });
+    else if (name === 'drawTextBox' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'number' && typeof values[3] === 'number' && typeof values[4] === 'string' && typeof values[5] === 'number' && typeof values[6] === 'number') ops.push({ type: 'textBox', x: values[0], y: values[1], w: values[2], h: values[3], text: values[4].replace(/\\n/g, '\n'), horizontalAlign: values[5], verticalAlign: values[6] });
   }
   return ops;
 }
@@ -46,7 +46,7 @@ local function capture(name,...)
   local fields={name}
   local args={...}
   for i=1,#args do fields[#fields+1]=(tostring(args[i]):gsub("\\n", "\\\\n")) end
-  current[#current+1]=table.concat(fields,"|")
+  current[#current+1]=table.concat(fields,"\\x1f")
 end
 screen=setmetatable({getWidth=function()return ${width} end,getHeight=function()return ${height} end}, {__index=function(_,name)return function(...)capture(name,...)end end})
 input={getBool=function()return false end,getNumber=function(channel)return ({${inputTable}})[channel] or 0 end}
