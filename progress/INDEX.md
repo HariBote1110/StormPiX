@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `continuous-ascii-lz-alphabet.md` — LZ alphabetを連続ASCII範囲へ寄せ、astral_openingをさらに31文字削減する決定
 - `lazy-lz-palette.md` — LZ paletteを描画時に直接復号し、astral_openingを8,192文字以内へ収める決定
 - `variable-lz-literals.md` — 頻出LZ palette索引を1文字にし、astral_openingを732文字削減する決定
 - `ascii-lz-decoder.md` — Base64索引表をASCII計算へ置換し、astral_openingを122文字削減する決定
