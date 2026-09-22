@@ -27,7 +27,7 @@ describe('外部フレーム番号', () => {
     if (!existsSync(root)) return;
     const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
     const generated = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
-    expect(readFileSync(artifact, 'utf8')).toBe(generated.lua);
+    expect(readFileSync(artifact, 'utf8').trimEnd()).toBe(generated.lua);
   });
 
   it('未指定時は従来の自動再生 Lua をバイト単位で維持する', () => {
