@@ -1,6 +1,6 @@
 {
   "name": "stormpix",
-  "version": "0.1.0-Alpha-21b",
+  "version": "0.1.0-Alpha-22a",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.0",
@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "bench": "node --experimental-strip-types bench/run.ts",
-    "bench:compare": "node --experimental-strip-types bench/compare/run.ts"
+    "bench:compare": "node --experimental-strip-types bench/compare/run.ts",
+    "stormpix": "node --experimental-strip-types tools/stormpix.ts"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

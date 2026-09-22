@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `asset-report-cli.md` — 実PNG資産の複雑度、変換文字数、予算・品質不変条件をJSON/CLIで回帰監視する決定
 - `fit-splitting-frame-channel.md` — fitの複数スクリプトを外部フレーム番号必須にし、品質不足を統計で通知する決定
 - `fit-quality-first-selection.md` — fitアニメーションを SSIM、スクリプト数、総文字数の順で選び、固定1件のexact分割候補を評価する決定
 - `external-frame-channel.md` — 外部コンポジット番号によるグローバルフレーム選択、自己完結符号化と入力境界の決定
