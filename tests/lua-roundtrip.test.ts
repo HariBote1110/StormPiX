@@ -30,6 +30,14 @@ describe('Lua round-trip verification', () => {
     for (let index = 0; index < frames.length; index += 1) expect(rendered[index]?.data).toEqual(frames[index]?.data);
   });
 
+  it('stores near-greyscale LZ palette entries in two Base64 characters', () => {
+    const indices = [Uint16Array.from([0, 1]), Uint16Array.from([1, 0])];
+    const lua = emitAnimationLuaLzFrames(indices, 2, 1, ['20,20,20', '45,46,44']);
+    const palette = lua.match(/P="([^"]*)"/)?.[1] ?? '';
+
+    expect(palette).toHaveLength(4);
+  });
+
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
     const source = frame(8, 8, 2);
     const result = convert(source, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
