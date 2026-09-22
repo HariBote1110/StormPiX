@@ -21,6 +21,14 @@ describe('normaliseOptions', () => {
     expect(normaliseOptions({ budget: -10 }).budget).toBe(1);
   });
 
+  it('clamps timeBudgetMs to the effective ceiling of 5000', () => {
+    expect(normaliseOptions({ timeBudgetMs: 60000 }).timeBudgetMs).toBe(5000);
+  });
+
+  it('clamps timeBudgetMs to a minimum of 100', () => {
+    expect(normaliseOptions({ timeBudgetMs: 0 }).timeBudgetMs).toBe(100);
+  });
+
   it('rejects an unknown dither value back to none', () => {
     // @ts-expect-error deliberately invalid input from an untyped source
     expect(normaliseOptions({ dither: 'bogus' }).dither).toBe('none');

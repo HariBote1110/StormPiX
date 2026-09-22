@@ -23,9 +23,7 @@ export function buildControlsPanel(
   const coloursField = numberField('最大パレット色数', 1, 256, 1, store.get().options.maxColours, (v) =>
     store.update((s) => ({ ...s, options: normaliseOptions({ ...s.options, maxColours: v }) })),
   );
-  const timeField = numberField('探索打ち切り時間 (ms)', 100, 60000, 100, store.get().options.timeBudgetMs, (v) =>
-    store.update((s) => ({ ...s, options: normaliseOptions({ ...s.options, timeBudgetMs: v }) })),
-  );
+  const timeField = buildSearchEffortField(store);
 
   const ditherField = document.createElement('div');
   ditherField.className = 'field checkbox-field';
@@ -115,6 +113,36 @@ export function buildControlsPanel(
 
   panel.append(budgetField, coloursField, ditherField, strategyField, timeField, ticksField, btnRow, busyIndicator);
   return panel;
+}
+
+function buildSearchEffortField(store: ReturnType<typeof createStore<AppState>>): HTMLElement {
+  const field = document.createElement('div');
+  field.className = 'field';
+  const id = 'search-effort';
+  const label = document.createElement('label');
+  label.htmlFor = id;
+  label.textContent = '探索の強さ';
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.id = id;
+  input.min = '100';
+  input.max = '5000';
+  input.step = '100';
+  input.value = String(store.get().options.timeBudgetMs);
+  input.addEventListener('change', () => {
+    const v = Number(input.value);
+    if (Number.isFinite(v)) {
+      store.update((s) => ({ ...s, options: normaliseOptions({ ...s.options, timeBudgetMs: v }) }));
+    }
+  });
+
+  const hint = document.createElement('p');
+  hint.className = 'field-hint';
+  hint.textContent =
+    '色や配置の候補をどこまで粘り強く探索するかを決めます。数値が大きいほど探索が丁寧になり画質が上がりやすい一方、変換にかかる時間は長くなります。結果自体はマシンの速度や負荷に左右されず常に同じになります。';
+
+  field.append(label, input, hint);
+  return field;
 }
 
 function buildModeField(store: ReturnType<typeof createStore<AppState>>): HTMLElement {

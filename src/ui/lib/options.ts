@@ -8,6 +8,11 @@ export interface UiConvertOptions {
   readonly maxColours: number;
   readonly dither: 'none' | 'floyd-steinberg';
   readonly strategy: EmitChoice;
+  /**
+   * Deterministic search-effort scalar passed to the core as `timeBudgetMs` (frozen core
+   * contract name — kept as-is). It no longer reads the wall clock; it only scales a counted
+   * work budget. The core clamps its effect at 5000, so the UI caps the range there too.
+   */
   readonly timeBudgetMs: number;
   /** 既定は 'lossless'（コアの既定値と一致させる） */
   readonly mode: ConvertMode;
@@ -28,7 +33,7 @@ const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
 export function normaliseOptions(raw: Partial<UiConvertOptions>): UiConvertOptions {
   const budget = clampInt(raw.budget ?? DEFAULT_OPTIONS.budget, 1, 8192);
   const maxColours = clampInt(raw.maxColours ?? DEFAULT_OPTIONS.maxColours, 1, 256);
-  const timeBudgetMs = clampInt(raw.timeBudgetMs ?? DEFAULT_OPTIONS.timeBudgetMs, 100, 60000);
+  const timeBudgetMs = clampInt(raw.timeBudgetMs ?? DEFAULT_OPTIONS.timeBudgetMs, 100, 5000);
   const dither = raw.dither === 'floyd-steinberg' ? 'floyd-steinberg' : 'none';
   const strategy: EmitChoice =
     raw.strategy === 'direct' || raw.strategy === 'table' || raw.strategy === 'packed' ? raw.strategy : 'auto';
