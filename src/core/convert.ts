@@ -477,12 +477,16 @@ function losslessAnimationSegment(
   const fullOpsForSegment = fullOps.slice(start, end);
   const diffOpsForSegment = [fullOps[start] as readonly DrawOp[], ...diffOps.slice(start + 1, end)];
   const frameOffset = frameChannel === undefined ? 0 : start;
+  const segmentIndices = frameIndices.slice(start, end);
+  const firstIndices = segmentIndices[0];
+  const staticSegment = firstIndices !== undefined && segmentIndices.every((indices) => indices.length === firstIndices.length && indices.every((value, index) => value === firstIndices[index]));
   const fullCandidates = [
     emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame, frameChannel, frameOffset),
     emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, frameOffset),
-    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, frameOffset),
+    emitAnimationLuaColumnDictionary(segmentIndices, width, height, colours, ticksPerFrame, frameChannel, frameOffset),
     ...(frameChannel === undefined && end - start <= 2 ? [emitAnimationLua(fullOpsForSegment, 'packed', ticksPerFrame)] : []),
-    ...(frameChannel === undefined && end - start <= 2 ? [emitAnimationLuaSharedPacked(frameIndices.slice(start, end), width, height, colours, ticksPerFrame)] : []),
+    ...(frameChannel === undefined && end - start <= 3 ? [emitAnimationLuaSharedPacked(segmentIndices, width, height, colours, ticksPerFrame)] : []),
+    ...(frameChannel === undefined && staticSegment ? [emitAnimationLuaSharedPacked([firstIndices], width, height, colours, ticksPerFrame, segmentIndices.length)] : []),
   ];
   if (frameChannel !== undefined) {
     return { lua: fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string, encoding: 'full' };

@@ -123,25 +123,49 @@ function emitDeltaPacked(width: number, height: number, colours: readonly string
   return deltaPackedDecoder(width, height, colours.length, data, palette, paletteMode);
 }
 
-/** Pack up to two indexed frames with one shared palette and one decoder. */
+/** Pack up to three indexed frames with one shared palette and one decoder. */
 export function emitAnimationLuaSharedPacked(
   frameIndices: readonly Uint16Array[],
   width: number,
   height: number,
   colours: readonly string[],
   ticksPerFrame = 6,
+  frameCount = frameIndices.length,
 ): string {
-  if (frameIndices.length === 0 || frameIndices.length > 2 || width <= 0 || height <= 0) return '';
+  if (frameIndices.length === 0 || frameIndices.length > 3 || frameCount < frameIndices.length || width <= 0 || height <= 0) return '';
   const used = new Set<number>();
   for (const indices of frameIndices) for (const index of indices) used.add(index);
   if (used.size < 2 || used.size > 512) return '';
-  const sourceIndexes = [...used].sort((left, right) => left - right);
-  const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
+  const sourceOrder = [...used].sort((left, right) => left - right);
+  const colourOrder = [...sourceOrder].sort((left, right) => {
+    const leftColour = (colours[left] ?? '0,0,0').split(',').map(Number);
+    const rightColour = (colours[right] ?? '0,0,0').split(',').map(Number);
+    return ((leftColour[0] ?? 0) * 65_536 + (leftColour[1] ?? 0) * 256 + (leftColour[2] ?? 0)) - ((rightColour[0] ?? 0) * 65_536 + (rightColour[1] ?? 0) * 256 + (rightColour[2] ?? 0));
+  });
+  const luminanceOrder = [...sourceOrder].sort((left, right) => {
+    const leftColour = (colours[left] ?? '0,0,0').split(',').map(Number);
+    const rightColour = (colours[right] ?? '0,0,0').split(',').map(Number);
+    return ((leftColour[0] ?? 0) * 299 + (leftColour[1] ?? 0) * 587 + (leftColour[2] ?? 0) * 114) - ((rightColour[0] ?? 0) * 299 + (rightColour[1] ?? 0) * 587 + (rightColour[2] ?? 0) * 114);
+  });
+  const encode = (sourceIndexes: readonly number[]): readonly string[] => {
+    const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
+    return frameIndices.map((indices) => encodeDeltaPixels(Array.from(indices, (index) => compactIndexes.get(index) ?? 0), width, height, sourceIndexes.length));
+  };
+  const sourceData = encode(sourceOrder);
+  const colourData = encode(colourOrder);
+  const luminanceData = encode(luminanceOrder);
+  const candidates = [
+    { indexes: sourceOrder, data: sourceData },
+    { indexes: colourOrder, data: colourData },
+    { indexes: luminanceOrder, data: luminanceData },
+  ];
+  const selected = candidates.reduce((best, candidate) => candidate.data.reduce((total, value) => total + value.length, 0) < best.data.reduce((total, value) => total + value.length, 0) ? candidate : best);
+  const sourceIndexes = selected.indexes;
   const paletteValues = sourceIndexes.map((index) => (colours[index] ?? '0,0,0').split(',').map(Number));
   const greyscale = paletteValues.map((colour) => colour[0] === colour[1] && colour[1] === colour[2]);
   const paletteMode = greyscale.every(Boolean) ? 'greyscale' : greyscale.some(Boolean) ? 'mixed' : 'colour';
   const palette = paletteValues.map((colour, index) => greyscale[index] ? String(colour[0]) : `{${colour.join(',')}}`).join(',');
-  const data = frameIndices.map((indices) => encodeDeltaPixels(Array.from(indices, (index) => compactIndexes.get(index) ?? 0), width, height, sourceIndexes.length));
+  const data = selected.data;
   const firstWidth = Math.max(1, Math.ceil(Math.log2(sourceIndexes.length)));
   const setColour = paletteMode === 'greyscale'
     ? 'S.setColor(e,e,e)'
@@ -149,8 +173,8 @@ export function emitAnimationLuaSharedPacked(
       ? 'if type(e)=="number"then S.setColor(e,e,e)else S.setColor(e[1],e[2],e[3])end'
       : 'S.setColor(e[1],e[2],e[3])';
   const decoder = `function D(d)local k=1 local j=5 local q=0 local function b()if j==5 then q=A:find(d:sub(k,k),1,true)-1 end local v=math.floor(q/2^j)%2 j=j-1 if j<0 then j=5 k=k+1 end return v end local function r(n)local v=0 for i=1,n do v=v*2+b()end return v end local function g()local z=0 while b()==0 do z=z+1 end local v=0 for i=0,z do v=v*2+b()end return v-1 end local c=0 local f=0 for y=0,${height - 1} do if y==0 then c=r(${firstWidth})else local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(f+q)%${sourceIndexes.length} end f=c for x=0,${width - 1} do if x>0 then local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(c+q)%${sourceIndexes.length} end local e=p[c+1]${setColour}F(x,y,1,1)end end end `;
-  const playback = `d={${data.map((value) => JSON.stringify(value)).join(',')}}function onDraw()D(d[f+1])end`;
-  return `S=screen A="${BASE64_ALPHABET}"p={${palette}}F=S.drawRectF ${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${playback}`;
+  const playback = `d={${data.map((value) => JSON.stringify(value)).join(',')}}function onDraw()${frameCount === 1 ? 'D(d[1])' : frameIndices.length === 1 ? 'if f==0 then D(d[1])end' : 'D(d[f+1])'}end`;
+  return `S=screen A="${BASE64_ALPHABET}"p={${palette}}F=S.drawRectF ${decoder}${compactAnimationTick(ticksPerFrame, frameCount)}${playback}`;
 }
 
 function emitTable(ops: readonly DrawOp[]): string {
