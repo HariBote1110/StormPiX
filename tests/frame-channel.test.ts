@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { convertFrames, render, replayLuaFrames, type Bitmap } from '../src/core/index';
 import { readPng } from '../bench/compare/png';
 import { executeLua } from './lua-executor';
@@ -20,6 +20,16 @@ function frame(shift: number): Bitmap {
 }
 
 describe('外部フレーム番号', () => {
+  it('astral_opening の圧縮Lua成果物を生成結果と同期する', () => {
+    const artifact = 'artifacts/astral_opening.lua';
+    expect(existsSync(artifact)).toBe(true);
+    const root = '/Users/yuki/doc/astral_opening';
+    if (!existsSync(root)) return;
+    const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
+    const generated = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
+    expect(readFileSync(artifact, 'utf8')).toBe(generated.lua);
+  });
+
   it('未指定時は従来の自動再生 Lua をバイト単位で維持する', () => {
     const frames = [frame(0), frame(2), frame(4), frame(6)];
     const omitted = convertFrames(frames, { mode: 'lossless', budget: 300, ticksPerFrame: 2, seed: 0 });
