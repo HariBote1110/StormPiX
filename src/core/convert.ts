@@ -1,5 +1,5 @@
 import { cover, type LabelImage } from './cover.ts';
-import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitLua } from './cost.ts';
+import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitAnimationLuaSharedPacked, emitLua } from './cost.ts';
 import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
@@ -482,6 +482,7 @@ function losslessAnimationSegment(
     emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, frameOffset),
     emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, frameOffset),
     ...(frameChannel === undefined && end - start <= 2 ? [emitAnimationLua(fullOpsForSegment, 'packed', ticksPerFrame)] : []),
+    ...(frameChannel === undefined && end - start <= 2 ? [emitAnimationLuaSharedPacked(frameIndices.slice(start, end), width, height, colours, ticksPerFrame)] : []),
   ];
   if (frameChannel !== undefined) {
     return { lua: fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string, encoding: 'full' };
