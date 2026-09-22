@@ -26,4 +26,16 @@ describe('direct Lua cost', () => {
     expect(costOf(ops, 'table')).toBe(emitLua(ops, 'table').length);
     expect(costOf(ops, 'packed')).toBe(emitLua(ops, 'packed').length);
   });
+
+  it('stores greyscale entries as scalars in a mixed packed palette', () => {
+    const ops: DrawOp[] = [];
+    for (let index = 0; index < 17; index += 1) {
+      const value = index * 13;
+      ops.push({ type: 'setColour', r: value, g: index % 2 === 0 ? value : (value + 31) % 256, b: index % 2 === 0 ? value : (value + 79) % 256 });
+      ops.push({ type: 'rectF', x: index, y: 0, w: 1, h: 1 });
+    }
+
+    const lua = emitLua(ops, 'packed');
+    expect(lua).toContain('type(e)=="number"');
+  });
 });
