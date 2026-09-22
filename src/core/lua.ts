@@ -3,7 +3,7 @@ import { renderMonitor } from './gamma.ts';
 import type { Bitmap, DrawOp } from './types.ts';
 
 export interface LuaExecutor {
-  execute(source: string, options?: { readonly frameCount?: number; readonly ticksPerFrame?: number; readonly drawInitialFrame?: boolean }): LuaExecution;
+  execute(source: string, options?: { readonly frameCount?: number; readonly ticksPerFrame?: number; readonly drawInitialFrame?: boolean; readonly width?: number; readonly height?: number; readonly inputNumbers?: readonly number[] }): LuaExecution;
 }
 
 export interface LuaExecution {

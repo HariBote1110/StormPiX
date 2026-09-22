@@ -23,7 +23,8 @@ function parseFrame(line: string): DrawOp[] {
     else if (name === 'drawTriangleF' && values.every((value) => typeof value === 'number')) ops.push({ type: 'triangleF', x1: values[0] as number, y1: values[1] as number, x2: values[2] as number, y2: values[3] as number, x3: values[4] as number, y3: values[5] as number });
     else if (name === 'drawCircle' && values.every((value) => typeof value === 'number')) ops.push({ type: 'circle', x: values[0] as number, y: values[1] as number, radius: values[2] as number });
     else if (name === 'drawCircleF' && values.every((value) => typeof value === 'number')) ops.push({ type: 'circleF', x: values[0] as number, y: values[1] as number, radius: values[2] as number });
-    else if (name === 'drawText' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'string') ops.push({ type: 'text', x: values[0], y: values[1], text: values[2] });
+    else if (name === 'drawText' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'string') ops.push({ type: 'text', x: values[0], y: values[1], text: values[2].replace(/\\\\n/g, '\n') });
+    else if (name === 'drawTextBox' && typeof values[0] === 'number' && typeof values[1] === 'number' && typeof values[2] === 'number' && typeof values[3] === 'number' && typeof values[4] === 'string' && typeof values[5] === 'number' && typeof values[6] === 'number') ops.push({ type: 'textBox', x: values[0], y: values[1], w: values[2], h: values[3], text: values[4].replace(/\\\\n/g, '\n'), horizontalAlign: values[5], verticalAlign: values[6] });
   }
   return ops;
 }
@@ -31,19 +32,24 @@ function parseFrame(line: string): DrawOp[] {
 export class ShellLuaExecutor implements LuaExecutor {
   public constructor(private readonly command = 'lua') {}
 
-  public execute(source: string, options: { readonly frameCount?: number; readonly ticksPerFrame?: number; readonly drawInitialFrame?: boolean } = {}): LuaExecution {
+  public execute(source: string, options: { readonly frameCount?: number; readonly ticksPerFrame?: number; readonly drawInitialFrame?: boolean; readonly width?: number; readonly height?: number; readonly inputNumbers?: readonly number[] } = {}): LuaExecution {
     const frameCount = Math.max(1, Math.floor(options.frameCount ?? 1));
     const ticksPerFrame = Math.max(1, Math.floor(options.ticksPerFrame ?? 1));
     const initial = options.drawInitialFrame === true;
+    const inputNumbers = options.inputNumbers ?? [];
+    const width = Math.max(0, Math.floor(options.width ?? 96));
+    const height = Math.max(0, Math.floor(options.height ?? 96));
+    const inputTable = inputNumbers.map((value, index) => `[${index + 1}]=${Number.isFinite(value) ? value : 0}`).join(',');
     const harness = `
 local current={}
 local function capture(name,...)
   local fields={name}
   local args={...}
-  for i=1,#args do fields[#fields+1]=tostring(args[i]) end
+  for i=1,#args do fields[#fields+1]=(tostring(args[i]):gsub("\\n", "\\\\n")) end
   current[#current+1]=table.concat(fields,"|")
 end
-screen=setmetatable({}, {__index=function(_,name)return function(...)capture(name,...)end end})
+screen=setmetatable({getWidth=function()return ${width} end,getHeight=function()return ${height} end}, {__index=function(_,name)return function(...)capture(name,...)end end})
+input={getBool=function()return false end,getNumber=function(channel)return ({${inputTable}})[channel] or 0 end}
 ${source}
 local function draw()
   io.write(table.concat(current,"\\x1e"),"\\n")

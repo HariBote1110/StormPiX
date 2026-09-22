@@ -1,7 +1,7 @@
 import type { Bitmap, DrawOp, PixelCertainty } from './types.ts';
 import { CERTAIN, UNCERTAIN } from './types.ts';
 
-// Rasterisation semantics ported from /Users/yuki/GitHub/storm-lua-runner/rust/lua-runtime-core/src/screen_raster.rs.
+// Rasterisation semantics ported from PhySim2/media/raster.js (MIT, © Shannon-Toppo).
 
 export interface RenderedWithMask {
   readonly bitmap: Bitmap;
@@ -9,9 +9,9 @@ export interface RenderedWithMask {
   readonly mask: Uint8Array;
 }
 
-/** The Rust reference uses 16; keep circle evidence in one editable table. */
+/** Kept for API compatibility; the documented rule below determines the value. */
 export const CIRCLE_SEGMENT_TABLE: readonly { readonly minimumRadius: number; readonly segments: number }[] = [
-  { minimumRadius: 0, segments: 16 },
+  { minimumRadius: 0, segments: 8 },
 ];
 
 // CG pixel 4x5 mono glyphs (ASCII 0x20..0x7e) are kept as a compact table.
@@ -62,7 +62,7 @@ function clippedRange(start: number, end: number, limit: number): [number, numbe
 }
 
 function blendChannel(source: number, alpha: number, destination: number): number {
-  return Math.min(255, Math.round(source * alpha / 255) + Math.round(destination * (255 - alpha) / 255));
+  return Math.floor((source * alpha + destination * (255 - alpha) + 127) / 255);
 }
 
 function renderInternal(ops: readonly DrawOp[], width: number, height: number): RenderedWithMask {
@@ -71,7 +71,6 @@ function renderInternal(ops: readonly DrawOp[], width: number, height: number): 
   const data = new Uint8ClampedArray(width * height * 4);
   const certainty = new Uint8Array(width * height);
   certainty.fill(CERTAIN);
-  for (let index = 3; index < data.length; index += 4) data[index] = 255;
   let colour = { r: 0, g: 0, b: 0, a: 255 };
 
   const paintPixel = (x: number, y: number, state: PixelCertainty = CERTAIN): void => {
@@ -82,88 +81,116 @@ function renderInternal(ops: readonly DrawOp[], width: number, height: number): 
     data[offset] = alpha === 255 ? colour.r : blendChannel(colour.r, alpha, data[offset] ?? 0);
     data[offset + 1] = alpha === 255 ? colour.g : blendChannel(colour.g, alpha, data[offset + 1] ?? 0);
     data[offset + 2] = alpha === 255 ? colour.b : blendChannel(colour.b, alpha, data[offset + 2] ?? 0);
-    data[offset + 3] = Math.min(255, alpha + Math.round((data[offset + 3] ?? 255) * (255 - alpha) / 255));
-    certainty[pixel] = state;
+    data[offset + 3] = blendChannel(alpha, alpha, data[offset + 3] ?? 0);
+    certainty[pixel] = CERTAIN;
   };
 
   const fillRect = (x: number, y: number, w: number, h: number): void => {
-    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return;
-    const rangeX = clippedRange(floorCoord(x), floorCoord(x + w) - 1, width);
-    const rangeY = clippedRange(floorCoord(y), floorCoord(y + h) - 1, height);
+    if (![x, y, w, h].every(Number.isFinite)) return;
+    const x0 = Math.round(x * 256) / 256, x1 = Math.round((x + w) * 256) / 256;
+    const y0 = Math.round(y * 256) / 256, y1 = Math.round((y + h) * 256) / 256;
+    if (x0 === x1 || y0 === y1) return;
+    const rangeX = clippedRange(Math.ceil(Math.min(x0, x1)), Math.ceil(Math.max(x0, x1)) - 1, width);
+    const rangeY = clippedRange(Math.floor(Math.min(y0, y1)), Math.floor(Math.max(y0, y1)) - 1, height);
     if (!rangeX || !rangeY) return;
     for (let py = rangeY[0]; py <= rangeY[1]; py += 1) for (let px = rangeX[0]; px <= rangeX[1]; px += 1) paintPixel(px, py);
   };
 
-  const outlineRect = (x: number, y: number, w: number, h: number): void => {
-    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return;
-    const x0 = floorCoord(x);
-    const y0 = floorCoord(y);
-    const x1 = floorCoord(x + w) - 1;
-    const y1 = floorCoord(y + h) - 1;
-    if (x1 < x0 || y1 < y0) return;
-    for (let px = x0; px <= x1; px += 1) { paintPixel(px, y0); if (y1 !== y0) paintPixel(px, y1); }
-    for (let py = y0 + 1; py <= y1 - 1; py += 1) { paintPixel(x0, py); if (x1 !== x0) paintPixel(x1, py); }
-  };
-
+  // Ported from PhySim2/media/raster.js (MIT, © Shannon-Toppo): exact 1/256 diamond-exit line rule.
   const drawLine = (x1: number, y1: number, x2: number, y2: number): void => {
     if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-    const deltaX = x2 - x1;
-    const deltaY = y2 - y1;
-    if (deltaX * deltaX + deltaY * deltaY < 1) return;
-    const xMajor = Math.abs(deltaX) >= Math.abs(deltaY);
-    const a1 = xMajor ? x1 : y1;
-    const b1 = xMajor ? y1 : x1;
-    const a2 = xMajor ? x2 : y2;
-    const b2 = xMajor ? y2 : x2;
-    const aLow = Math.min(a1, a2);
-    const aHigh = Math.max(a1, a2);
-    const pLow = floorCoord(roundCoord(aLow));
-    const pHigh = floorCoord(roundCoord(aHigh));
-    const denominator = a2 - a1;
-    for (let pixel = pLow; pixel <= pHigh; pixel += 1) {
-      const ratio = Math.abs(denominator) < 1e-6 ? 0 : Math.max(0, Math.min(1, (pixel - a1) / denominator));
-      const other = b1 + (b2 - b1) * ratio;
-      const quantised = floorCoord(roundCoord(other));
-      paintPixel(xMajor ? pixel : quantised, xMajor ? quantised : pixel, UNCERTAIN);
+    if (Math.max(Math.abs(x1), Math.abs(y1), Math.abs(x2), Math.abs(y2)) > 65_536) {
+      let low = 0, high = 1;
+      const dx = x2 - x1, dy = y2 - y1;
+      for (const [p, q] of [[-dx, x1 + 64], [dx, width + 64 - x1], [-dy, y1 + 64], [dy, height + 64 - y1]] as const) {
+        if (p === 0) { if (q < 0) return; continue; }
+        const t = q / p;
+        if (p < 0) low = Math.max(low, t); else high = Math.min(high, t);
+        if (low > high) return;
+      }
+      const originalX = x1, originalY = y1;
+      x1 = originalX + dx * low;
+      y1 = originalY + dy * low;
+      x2 = originalX + dx * high;
+      y2 = originalY + dy * high;
+    }
+    const X1 = Math.round(x1 * 256), Y1 = Math.round(y1 * 256), X2 = Math.round(x2 * 256), Y2 = Math.round(y2 * 256);
+    if (X1 === X2 && Y1 === Y2) return;
+    const xMajor = Math.abs(X2 - X1) >= Math.abs(Y2 - Y1);
+    const A1 = xMajor ? X1 : Y1, B1 = xMajor ? Y1 : X1, A2 = xMajor ? X2 : Y2, B2 = xMajor ? Y2 : X2;
+    const sign = A2 > A1 ? 1 : -1, dA = (A2 - A1) * sign, dB = (B2 - B1) * sign;
+    const floorDiv = (n: number, d: number): number => {
+      const remainder = ((n % d) + d) % d;
+      return (n - remainder) / d;
+    };
+    const onSegment = (px: number, py: number): boolean => (X2 - X1) * (py - Y1) === (Y2 - Y1) * (px - X1) && px >= Math.min(X1, X2) && px <= Math.max(X1, X2) && py >= Math.min(Y1, Y2) && py <= Math.max(Y1, Y2);
+    const corners: readonly (readonly [number, number])[] = xMajor ? [[0, -128]] : [[128, 0], [0, -128]];
+    const owns = (X: number, Y: number, cx: number, cy: number): boolean => {
+      const distance = Math.abs(X - cx) + Math.abs(Y - cy);
+      return distance < 128 || (distance === 128 && corners.some(([ox, oy]) => X - cx === ox && Y - cy === oy));
+    };
+    const meets = (cx: number, cy: number): boolean => {
+      const dx = X2 - X1, dy = Y2 - Y1;
+      let loN = 0, loD = 1, hiN = 1, hiD = 1, loOpen = false, hiOpen = false;
+      for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+        const a = sx * (X1 - cx) + sy * (Y1 - cy), b = sx * dx + sy * dy;
+        if (b === 0) { if (a >= 128) return false; continue; }
+        const numerator = b > 0 ? 128 - a : a - 128;
+        const denominator = Math.abs(b);
+        if (b > 0) {
+          if (numerator * hiD <= hiN * denominator) { hiN = numerator; hiD = denominator; hiOpen = true; }
+        } else if (numerator * loD >= loN * denominator) { loN = numerator; loD = denominator; loOpen = true; }
+      }
+      const order = loN * hiD - hiN * loD;
+      return order < 0 || (order === 0 && !loOpen && !hiOpen);
+    };
+    const limit = (xMajor ? width : height) - 1;
+    for (let p = Math.max(0, Math.floor(Math.min(A1, A2) / 256) - 1); p <= Math.min(limit, Math.ceil(Math.max(A1, A2) / 256) + 1); p += 1) {
+      const n = B1 * dA + (p * 256 - A1) * dB;
+      const q = xMajor ? floorDiv(n + 128 * dA, 256 * dA) : -floorDiv(-(n - 128 * dA), 256 * dA);
+      const cx = (xMajor ? p : q) * 256, cy = (xMajor ? q : p) * 256;
+      if (owns(X2, Y2, cx, cy)) continue;
+      if (meets(cx, cy) || corners.some(([ox, oy]) => onSegment(cx + ox, cy + oy))) paintPixel(xMajor ? p : q, xMajor ? q : p);
     }
   };
 
-  const edgeDistance = (x: number, y: number, ax: number, ay: number, bx: number, by: number): number => {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const lengthSquared = dx * dx + dy * dy;
-    const ratio = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / lengthSquared));
-    return Math.hypot(x - (ax + ratio * dx), y - (ay + ratio * dy));
+  const outlineRect = (x: number, y: number, w: number, h: number): void => {
+    if (![x, y, w, h].every(Number.isFinite)) return;
+    drawLine(x, y, x + w, y);
+    drawLine(x + w, y, x + w, y + h);
+    drawLine(x + w, y + h, x, y + h);
+    drawLine(x, y + h, x, y);
   };
 
-  const fillConvexPolygon = (points: readonly [number, number][]): void => {
+  const fillConvexPolygon = (points: readonly [number, number][], yOffset: number, ySign: number): void => {
     if (points.length < 3) return;
-    const minY = floorCoord(roundCoord(Math.min(...points.map((point) => point[1]))));
-    const maxY = floorCoord(roundCoord(Math.max(...points.map((point) => point[1]))));
-    for (let y = minY; y <= maxY; y += 1) {
-      const intersections: number[] = [];
-      for (let index = 0; index < points.length; index += 1) {
-        const [ax, ay] = points[index] as [number, number];
-        const [bx, by] = points[(index + 1) % points.length] as [number, number];
-        const low = Math.min(ay, by);
-        const high = Math.max(ay, by);
-        if (ay === by) {
-          if (Math.abs(y - ay) <= 0.5) { intersections.push(Math.min(ax, bx)); intersections.push(Math.max(ax, bx)); }
-        } else if (y >= low - 0.5 && y <= high + 0.5) intersections.push(ax + ((y - ay) * (bx - ax)) / (by - ay));
+    const snapped = points.map(([x, y]) => [Math.round(x * 256) / 256, Math.round(y * 256) / 256] as [number, number]);
+    let doubledArea = 0;
+    for (let index = 0; index < snapped.length; index += 1) {
+      const [ax, ay] = snapped[index] as [number, number];
+      const [bx, by] = snapped[(index + 1) % snapped.length] as [number, number];
+      doubledArea += ax * by - ay * bx;
+    }
+    if (doubledArea === 0) return;
+    const yValues = snapped.map(([, y]) => y);
+    const top = Math.max(0, Math.floor(Math.min(...yValues) - yOffset));
+    const bottom = Math.min(height - 1, Math.ceil(Math.max(...yValues) - yOffset));
+    for (let py = top; py <= bottom; py += 1) {
+      const sampleY = py + yOffset;
+      let left = Infinity, right = -Infinity;
+      for (let index = 0; index < snapped.length; index += 1) {
+        const [ax, ay] = snapped[index] as [number, number];
+        const [bx, by] = snapped[(index + 1) % snapped.length] as [number, number];
+        const low = Math.min(ay, by), high = Math.max(ay, by);
+        if (low === high || sampleY < low || sampleY > high || (sampleY === low && ySign < 0) || (sampleY === high && ySign > 0)) continue;
+        const x = ax + (bx - ax) * ((sampleY - ay) / (by - ay));
+        if (x < left) left = x;
+        if (x > right) right = x;
       }
-      if (intersections.length < 2) continue;
-      intersections.sort((a, b) => a - b);
-      const range = clippedRange(Math.ceil(intersections[0] as number), Math.floor(intersections[intersections.length - 1] as number), width);
+      if (left >= right) continue;
+      const range = clippedRange(Math.ceil(left), Math.ceil(right) - 1, width);
       if (!range) continue;
-      for (let x = range[0]; x <= range[1]; x += 1) {
-        let boundary = false;
-        for (let index = 0; index < points.length; index += 1) {
-          const point = points[index] as [number, number];
-          const next = points[(index + 1) % points.length] as [number, number];
-          if (edgeDistance(x, y, point[0], point[1], next[0], next[1]) <= 0.75) boundary = true;
-        }
-        paintPixel(x, y, boundary ? UNCERTAIN : CERTAIN);
-      }
+      for (let px = range[0]; px <= range[1]; px += 1) paintPixel(px, py);
     }
   };
 
@@ -172,40 +199,11 @@ function renderInternal(ops: readonly DrawOp[], width: number, height: number): 
       drawLine(op.x1, op.y1, op.x2, op.y2); drawLine(op.x2, op.y2, op.x3, op.y3); drawLine(op.x3, op.y3, op.x1, op.y1);
       return;
     }
-    if (![op.x1, op.y1, op.x2, op.y2, op.x3, op.y3].every(Number.isFinite)) return;
-    const points = [[op.x1, op.y1], [op.x2, op.y2], [op.x3, op.y3]] as [number, number][];
-    points.sort((left, right) => left[1] - right[1]);
-    const [top, middle, bottom] = points as [[number, number], [number, number], [number, number]];
-    const yTop = floorCoord(roundCoord(top[1]));
-    const yBottom = floorCoord(roundCoord(bottom[1]));
-    const interpolate = (y: number, start: [number, number], end: [number, number]): number => {
-      if (Math.abs(end[1] - start[1]) < Number.EPSILON) return start[0];
-      const ratio = Math.max(0, Math.min(1, (y - start[1]) / (end[1] - start[1])));
-      return start[0] + (end[0] - start[0]) * ratio;
-    };
-    for (let y = yTop; y <= yBottom; y += 1) {
-      const edgeAC = interpolate(y, top, bottom);
-      const other = y < middle[1] ? interpolate(y, top, middle) : interpolate(y, middle, bottom);
-      const left = Math.min(edgeAC, other);
-      const right = Math.max(edgeAC, other);
-      const range = clippedRange(Math.ceil(left), Math.floor(right), width);
-      if (!range) continue;
-      for (let x = range[0]; x <= range[1]; x += 1) {
-        let boundary = false;
-        for (let index = 0; index < points.length; index += 1) {
-          const start = points[index] as [number, number];
-          const end = points[(index + 1) % points.length] as [number, number];
-          if (edgeDistance(x, y, start[0], start[1], end[0], end[1]) <= 0.75) boundary = true;
-        }
-        paintPixel(x, y, boundary ? UNCERTAIN : CERTAIN);
-      }
-    }
+    fillConvexPolygon([[op.x1, op.y1], [op.x2, op.y2], [op.x3, op.y3]], 1, -1);
   };
 
   const circleSegments = (radius: number): number => {
-    let segments = CIRCLE_SEGMENT_TABLE[0]?.segments ?? 16;
-    for (const entry of CIRCLE_SEGMENT_TABLE) if (radius >= entry.minimumRadius) segments = entry.segments;
-    return segments;
+    return Math.min(16, Math.max(8, Math.floor(Math.abs(radius) / 2)));
   };
 
   const drawCircle = (op: Extract<DrawOp, { type: 'circle' | 'circleF' }>): void => {
@@ -214,9 +212,9 @@ function renderInternal(ops: readonly DrawOp[], width: number, height: number): 
     const segments = circleSegments(Math.abs(op.radius));
     for (let index = 0; index < segments; index += 1) {
       const angle = index * Math.PI * 2 / segments;
-      points.push([op.x + Math.cos(angle) * op.radius, op.y + Math.sin(angle) * op.radius]);
+      points.push([Math.fround(op.x + Math.cos(angle) * Math.abs(op.radius)), Math.fround(op.y + Math.sin(angle) * Math.abs(op.radius))]);
     }
-    if (op.type === 'circleF') fillConvexPolygon(points);
+    if (op.type === 'circleF') fillConvexPolygon(points, 0, 1);
     else for (let index = 0; index < points.length; index += 1) {
       const start = points[index] as [number, number];
       const end = points[(index + 1) % points.length] as [number, number];
@@ -229,21 +227,48 @@ function renderInternal(ops: readonly DrawOp[], width: number, height: number): 
     let cursorY = y;
     for (const character of text) {
       if (character === '\n') { cursorX = x; cursorY += 6; continue; }
-      const glyph = GLYPH_DATA[character.charCodeAt(0) - 32] ?? (GLYPHS[character]?.join('') ?? GLYPH_DATA[0]);
+      const upper = character.toUpperCase();
+      const glyph = GLYPH_DATA[upper.charCodeAt(0) - 32] ?? (GLYPHS[upper]?.join('') ?? GLYPH_DATA[0]);
       for (let row = 0; row < 5; row += 1) for (let column = 0; column < 4; column += 1) if (glyph?.[row * 4 + column] === '1') paintPixel(floorCoord(cursorX + column), floorCoord(cursorY + row));
       cursorX += 5;
+    }
+  };
+
+  const drawTextBox = (op: Extract<DrawOp, { type: 'textBox' }>): void => {
+    const capacity = Math.max(1, Math.floor(op.w / 5));
+    const lines: string[] = [];
+    for (const paragraph of op.text.split('\n')) {
+      let position = 0;
+      do {
+        let end = Math.min(paragraph.length, position + capacity);
+        if (end < paragraph.length && paragraph[end] !== ' ') {
+          const space = paragraph.lastIndexOf(' ', end - 1);
+          if (space >= position) end = space + 1;
+        }
+        lines.push(paragraph.slice(position, end));
+        position = end;
+      } while (position < paragraph.length);
+    }
+    const blockHeight = lines.length * 6 - 1;
+    const top = op.verticalAlign < 0 ? op.y : op.verticalAlign > 0 ? op.y + op.h - blockHeight : op.y + (op.h - blockHeight) / 2;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] as string;
+      const lineWidth = line.length === 0 ? 0 : line.length * 5 - 1;
+      const left = op.horizontalAlign < 0 ? op.x : op.horizontalAlign > 0 ? op.x + op.w - lineWidth : op.x + (op.w - lineWidth) / 2;
+      drawText(Math.floor(left), Math.floor(top) + index * 6, line);
     }
   };
 
   for (const op of ops) {
     switch (op.type) {
       case 'setColour': colour = { r: op.r, g: op.g, b: op.b, a: op.a ?? 255 }; break;
-      case 'rectF': fillRect(floorCoord(op.x), floorCoord(op.y), floorCoord(op.w), floorCoord(op.h)); break;
-      case 'rect': outlineRect(floorCoord(op.x), floorCoord(op.y), floorCoord(op.w), floorCoord(op.h)); break;
+      case 'rectF': fillRect(op.x, op.y, op.w, op.h); break;
+      case 'rect': outlineRect(op.x, op.y, op.w, op.h); break;
       case 'line': drawLine(op.x1, op.y1, op.x2, op.y2); break;
       case 'triangle': case 'triangleF': drawTriangle(op); break;
       case 'circle': case 'circleF': drawCircle(op); break;
       case 'text': drawText(op.x, op.y, op.text); break;
+      case 'textBox': drawTextBox(op); break;
     }
   }
   const bitmap = { width, height, data };

@@ -71,4 +71,5 @@ export type DrawOp =
   | { readonly type: 'triangleF'; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number; readonly x3: number; readonly y3: number }
   | { readonly type: 'circle'; readonly x: number; readonly y: number; readonly radius: number }
   | { readonly type: 'circleF'; readonly x: number; readonly y: number; readonly radius: number }
-  | { readonly type: 'text'; readonly x: number; readonly y: number; readonly text: string };
+  | { readonly type: 'text'; readonly x: number; readonly y: number; readonly text: string }
+  | { readonly type: 'textBox'; readonly x: number; readonly y: number; readonly w: number; readonly h: number; readonly text: string; readonly horizontalAlign: number; readonly verticalAlign: number };
