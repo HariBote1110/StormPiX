@@ -136,6 +136,14 @@ select {
   align-items: start;
 }
 
+/* Grid items default to a min-content min-width, which lets a long unbreakable
+   child (e.g. a <select>'s widest option text) force the column - and the whole
+   page - wider than the viewport. Letting them shrink keeps the page from
+   scrolling sideways at narrow widths. */
+.app-body > * {
+  min-width: 0;
+}
+
 @media (max-width: 768px) {
   .app-body {
     grid-template-columns: 1fr;
@@ -148,6 +156,10 @@ select {
   border-radius: var(--radius-md);
   padding: var(--space-4);
   margin-bottom: var(--space-4);
+  /* .panel is a flex item of .controls-column/.results-column; flex items also
+     default to a content-based min-width, so this needs the same shrink fix as
+     the grid columns above. */
+  min-width: 0;
 }
 
 .panel h2 {
@@ -183,6 +195,8 @@ select {
 
 .field input[type='number'],
 .field select {
+  width: 100%;
+  max-width: 100%;
   background: var(--colour-surface-alt);
   border: 1px solid var(--colour-border);
   border-radius: var(--radius-sm);
