@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `two-frame-packed-animation.md` — 1〜2フレームのpacked共有候補によりastralを4,716文字削減する決定
 - `mixed-greyscale-packed-palette.md` — 高色数packed paletteのグレースケール色を単一値化し、astralを5,216文字削減する決定
 - `high-colour-lossless-packed.md` — 高色数アニメーションの単一フレームpacked候補によりastral_openingを59%削減する決定
 - `column-dictionary-string-methods.md` — 列辞書デコーダをLua文字列メソッドへ短縮し、実資産を112文字削減する決定
