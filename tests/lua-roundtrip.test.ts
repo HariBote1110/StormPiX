@@ -39,6 +39,7 @@ describe('Lua round-trip verification', () => {
     expect(lua).not.toContain('A="');
     expect(lua).toContain('if v<58 then');
     expect(lua).not.toContain('p={}');
+    expect(lua).toContain('n>95');
   });
 
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
