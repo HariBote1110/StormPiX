@@ -290,11 +290,11 @@ export function emitAnimationLuaLzFrames(
   const literalDecoder = compactLiterals
     ? `local v=V(d:byte(i))i=i+1 if v<58 then o[#o+1]=v else o[#o+1]=58+(v-58)*64+V(d:byte(i))i=i+1 end `
     : `o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n>95 and n-53 or n-48 end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
+  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n-(n>95 and 53 or 48)end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
   const colour = palette.nearGreyscale
     ? `local v=V(P:byte(c*2+1))*64+V(P:byte(c*2+2))local g=m(v/16)S.setColor(g+m(v/4)%4-1,g,g+v%4-1)`
     : `local i=c*4+1 local v=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))S.setColor(m(v/65536),m(v/256)%256,v%256)`;
-  const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},m(z/${width}),1,1)end end`;
+  const draw = `function onDraw()local q for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},m(z/${width}),1,1)end end`;
   return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
 }
 
@@ -473,7 +473,7 @@ function compactAnimationPrefix(uses: ReadonlySet<string>, palette: readonly str
 
 function compactAnimationTick(ticksPerFrame: number, frameCount: number, frameChannel?: number): string {
   if (frameChannel !== undefined) return `f=0 function onTick()f=input.getNumber(${frameChannel})end `;
-  return `f=0 t=0 function onTick()t=t+1 if t==${ticksPerFrame} then t=0 f=(f+1)%${frameCount} end end `;
+  return `f=0 t=0 function onTick()t=t+1 if t>${ticksPerFrame - 1} then t=0 f=(f+1)%${frameCount} end end `;
 }
 
 function compactAnimationBranches(bodies: readonly { readonly body: string }[], frameOffset = 0): string {

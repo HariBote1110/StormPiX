@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `lz-decoder-micro-optimisation.md` — LZ復号・描画器の等価な局所短縮でastral_openingを5文字削減する決定
 - `continuous-ascii-lz-alphabet.md` — LZ alphabetを連続ASCII範囲へ寄せ、astral_openingをさらに31文字削減する決定
 - `lazy-lz-palette.md` — LZ paletteを描画時に直接復号し、astral_openingを8,192文字以内へ収める決定
 - `variable-lz-literals.md` — 頻出LZ palette索引を1文字にし、astral_openingを732文字削減する決定
