@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `fit-animation-last-resort-splitting.md` — fitアニメーションの単一スクリプト探索を維持し、不可能な場合だけ選択済み描画操作を分割する決定
 - `column-dictionary-boundaries.md` — 可変長列辞書の区切り除去で実資産40フレームを5,536文字へ短縮し、single-use inline化を不採用とした計測
 - `ingame-rasterisation.md` — Stormworks 実機 pixel coverage 規則、PhySim2 由来のラスタライズ移植とfixture検証基盤
 - `monitor-gamma.md` — 交換可能なモニターLUT、device target、符号化誤差とdevice errorの分離

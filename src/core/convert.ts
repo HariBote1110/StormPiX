@@ -51,6 +51,8 @@ interface Candidate {
 interface AnimationCandidate {
   readonly playbackOps: readonly DrawOp[][];
   readonly fullOps: readonly DrawOp[][];
+  readonly diffOps: readonly DrawOp[][];
+  readonly frameIndices: readonly Uint16Array[];
   readonly palette: readonly Rgb[];
   readonly strategy: EmitStrategy;
   readonly encoding: 'full' | 'keyframe-diff';
@@ -418,6 +420,7 @@ function animationCandidateBetter(candidate: AnimationCandidate, best: Animation
 interface PreparedAnimation {
   readonly fullOps: readonly DrawOp[][];
   readonly diffOps: readonly DrawOp[][];
+  readonly frameIndices: readonly Uint16Array[];
   readonly rendered: Bitmap;
   readonly metrics: QualityMetrics;
 }
@@ -436,7 +439,7 @@ function prepareAnimation(frames: readonly Bitmap[], palette: readonly Rgb[], in
     psnr: renderedFrames.reduce((sum, rendered, index) => sum + psnr(frames[index] as Bitmap, rendered), 0) / frames.length,
     rmse: renderedFrames.reduce((sum, rendered, index) => sum + rmse(frames[index] as Bitmap, rendered), 0) / frames.length,
   };
-  return { fullOps, diffOps, rendered: renderedFrames[0] as Bitmap, metrics };
+  return { fullOps, diffOps, frameIndices: indices, rendered: renderedFrames[0] as Bitmap, metrics };
 }
 
 interface LosslessAnimationScripts {
@@ -542,7 +545,7 @@ function evaluateAnimation(
     const playbackOps = encoding === 'full' ? prepared.fullOps : prepared.diffOps;
     for (const strategy of strategies) {
       const lua = emitAnimationLua(playbackOps, strategy, ticksPerFrame, encoding === 'keyframe-diff');
-      const candidate: AnimationCandidate = { playbackOps, fullOps: prepared.fullOps, palette, strategy, encoding, lua, rendered: prepared.rendered, metrics: prepared.metrics };
+      const candidate: AnimationCandidate = { playbackOps, fullOps: prepared.fullOps, diffOps: prepared.diffOps, frameIndices: prepared.frameIndices, palette, strategy, encoding, lua, rendered: prepared.rendered, metrics: prepared.metrics };
       if (!shortest || lua.length < shortest.lua.length) shortest = candidate;
       if (lua.length <= budget && animationCandidateBetter(candidate, best)) best = candidate;
     }
@@ -749,21 +752,34 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
     }
   }
 
-  const selected = best ?? shortest;
+  const singleScriptBest = best;
+  const selected = singleScriptBest ?? shortest;
   if (!selected) {
     const fallbackIndices = frames.map((frame) => new Uint16Array(frame.width * frame.height));
     best = evaluateAnimation(prepareAnimation(frames, lastPalette, fallbackIndices), lastPalette, strategies, ticksPerFrame, Number.MAX_SAFE_INTEGER).shortest;
   } else best = selected;
-  const charCount = best.lua.length;
+  const split = singleScriptBest ? undefined : splitLosslessAnimation(
+    best.fullOps,
+    best.diffOps,
+    best.frameIndices,
+    width,
+    height,
+    budget,
+    ticksPerFrame,
+    best.palette.map((colour) => colour.join(',')),
+  );
+  const scripts = split?.scripts ?? [best.lua];
+  const lua = scripts[0] as string;
+  const charCount = lua.length;
   const elapsedMs = performance.now() - started;
   const frameOps = best.playbackOps.map((ops) => ops.length);
   const allOps = best.playbackOps.flat();
   return {
-    lua: best.lua,
-    scripts: [best.lua],
-    totalCharCount: best.lua.length,
+    lua,
+    scripts,
+    totalCharCount: scripts.reduce((sum, script) => sum + script.length, 0),
     charCount,
-    withinBudget: charCount <= budget,
+    withinBudget: scripts.every((script) => script.length <= budget),
     strategy: best.strategy,
     palette: best.palette,
     rendered: best.rendered,
@@ -775,8 +791,9 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       elapsedMs,
       frameCount: frames.length,
       frameOps,
-      encoding: best.encoding,
+      encoding: split?.encoding ?? best.encoding,
       fullFrameChars: emitAnimationLua(best.fullOps, best.strategy, ticksPerFrame, false).length,
+      scriptFrameRanges: split?.ranges,
       timeBudgetTruncated: work.timeBudgetTruncated(),
     },
   };
