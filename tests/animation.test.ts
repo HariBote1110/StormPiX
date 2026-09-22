@@ -75,6 +75,9 @@ describe('convertFrames', () => {
     expect(result.lua).toContain('local Q={}for z in string.gmatch(q,"[^!]+")do Q[#Q+1]=z end');
     expect(result.lua).toContain('local s=Q[n+1]');
     expect(result.lua).not.toContain('local s for z in string.gmatch');
+    expect(result.lua).toContain('d={');
+    expect(result.lua).toContain('D(d[f+1])');
+    expect(result.lua).not.toContain('elseif f==');
   });
 
   it('is byte deterministic and reports exact character and budget invariants', () => {
