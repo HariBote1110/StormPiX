@@ -216,7 +216,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
       }
     }
     if (length >= 3) {
-      result += length <= 34 ? `${LZ_ALPHABET[length + 29] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      result += length <= 35 ? `${LZ_ALPHABET[length + 28] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
       for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
       index += length;
       continue;
@@ -225,7 +225,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
     do {
       addReference(index);
       index += 1;
-      if (index - start === 32 || index >= values.length) break;
+      if (index - start === 31 || index >= values.length) break;
       const lookahead = references.get(keyAt(index)) ?? [];
       length = 0;
       for (let candidateIndex = lookahead.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
@@ -290,7 +290,7 @@ export function emitAnimationLuaLzFrames(
   const literalDecoder = compactLiterals
     ? `local v=V(d:byte(i))i=i+1 if v<58 then o[#o+1]=v else o[#o+1]=58+(v-58)*64+V(d:byte(i))i=i+1 end `
     : `o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n-(n>95 and 53 or 48)end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
+  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n-(n>95 and 53 or 48)end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<31 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-28 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
   const colour = palette.nearGreyscale
     ? `local v=V(P:byte(c*2+1))*64+V(P:byte(c*2+2))local g=m(v/16)S.setColor(g+m(v/4)%4-1,g,g+v%4-1)`
     : `local i=c*4+1 local v=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))S.setColor(m(v/65536),m(v/256)%256,v%256)`;

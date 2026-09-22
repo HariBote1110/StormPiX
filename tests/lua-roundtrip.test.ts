@@ -38,6 +38,7 @@ describe('Lua round-trip verification', () => {
     expect(palette).toHaveLength(4);
     expect(lua).not.toContain('A="');
     expect(lua).toContain('if v<58 then');
+    expect(lua).toContain('if n<31 then');
     expect(lua).not.toContain('p={}');
     expect(lua).toContain('n>95');
     expect(lua.length).toBeLessThanOrEqual(790);
