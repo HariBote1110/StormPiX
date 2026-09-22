@@ -29,15 +29,14 @@ describe('外部フレーム番号', () => {
     expect(undefinedChannel.totalCharCount).toBe(omitted.totalCharCount);
   });
 
-  it('未指定時の分割 lossless 出力は astral_opening の既知文字数を維持する', () => {
+  it('astral_opening の高色数フレームも lossless で各スクリプトを予算内に収める', () => {
     const root = '/Users/yuki/doc/astral_opening';
     if (!existsSync(root)) return;
     const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
     const result = convertFrames(frames, { mode: 'lossless', budget: 8192, seed: 0 });
-    const output = result.scripts.join('');
-
-    expect(result.scripts).toHaveLength(30);
-    expect(output).toHaveLength(97294);
+    expect(result.withinBudget).toBe(true);
+    expect(result.scripts.every((script) => script.length <= 8192)).toBe(true);
+    expect(result.totalCharCount).toBeLessThan(70_000);
   });
 
   it('Lua で順不同のグローバル添字を完全フレームとして描画し、範囲外と小数は何も描かない', () => {
