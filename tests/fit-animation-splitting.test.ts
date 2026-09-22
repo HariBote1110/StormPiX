@@ -15,7 +15,39 @@ function patternedFrames(frameCount: number, width: number, height: number): Bit
   });
 }
 
+function dictionaryFavouringFrames(): Bitmap[] {
+  const width = 96;
+  const height = 32;
+  const colours = Array.from({ length: 16 }, (_, index) => [
+    (index * 47) % 256,
+    (index * 83) % 256,
+    (index * 131) % 256,
+  ] as const);
+  const columns = Array.from({ length: 48 }, (_, column) => Array.from({ length: height }, (_, row) => (column * 11 + row * 7 + row * row) % colours.length));
+  return Array.from({ length: 8 }, (_, frame) => {
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      const colour = colours[columns[(x + frame * 13) % columns.length]?.[y] ?? 0] as readonly [number, number, number];
+      const offset = (y * width + x) * 4;
+      data[offset] = colour[0];
+      data[offset + 1] = colour[1];
+      data[offset + 2] = colour[2];
+      data[offset + 3] = 255;
+    }
+    return { width, height, data };
+  });
+}
+
 describe('fit animation splitting', () => {
+  it('chooses a high-quality dictionary fit over a lower-quality plain fit', () => {
+    const result = convertFrames(dictionaryFavouringFrames(), { mode: 'fit', budget: 8192, maxColours: 16, seed: 0, ticksPerFrame: 6 });
+
+    expect(result.scripts).toHaveLength(1);
+    expect(result.withinBudget).toBe(true);
+    expect(result.metrics.ssim).toBeGreaterThanOrEqual(0.99);
+    expect(result.lua).toContain('q="');
+  }, 120000);
+
   it('keeps a one-script fit result as one script when it fits', () => {
     const result = convertFrames(patternedFrames(2, 8, 8), { mode: 'fit', budget: 8192, seed: 0, ticksPerFrame: 2 });
 

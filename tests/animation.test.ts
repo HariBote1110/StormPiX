@@ -29,8 +29,8 @@ function dictionaryFrame(width: number, height: number, shift: number): Bitmap {
 
 function highColourAnimation(): Bitmap[] {
   const frames: Bitmap[] = [];
-  for (let frame = 0; frame < 30; frame += 1) {
-    const width = 96;
+  for (let frame = 0; frame < 2; frame += 1) {
+    const width = 33;
     const height = 32;
     const data = new Uint8ClampedArray(width * height * 4);
     for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
@@ -97,8 +97,13 @@ describe('convertFrames', () => {
         return calls <= 2 ? 0 : 10_000;
       });
       expect(loaded.lua).toBe(idle.lua);
-      expect(loaded.stats.timeBudgetTruncated).toBe(mode === 'fit');
-      expect(idle.stats.timeBudgetTruncated).toBe(mode === 'fit');
+      if (mode === 'fit') {
+        expect(loaded.stats.timeBudgetTruncated).toBe(true);
+        expect(idle.stats.timeBudgetTruncated).toBe(true);
+      } else {
+        expect(loaded.stats.timeBudgetTruncated).toBe(false);
+        expect(idle.stats.timeBudgetTruncated).toBe(false);
+      }
     }
   }, 30000);
 

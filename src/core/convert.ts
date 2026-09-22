@@ -11,6 +11,7 @@ const DEFAULT_BUDGET = 8192;
 const DEFAULT_TIME_BUDGET_MS = 5000;
 const DEFAULT_WORK_BUDGET = 60;
 const DEFAULT_ANIMATION_WORK_BUDGET = 40;
+const DICTIONARY_FIT_CANDIDATE_LIMIT = 16;
 const HIGH_BUDGET_WORK_CAP = 12;
 const ALL_STRATEGIES: readonly EmitStrategy[] = ['direct', 'table', 'packed'];
 
@@ -57,6 +58,13 @@ interface AnimationCandidate {
   readonly lua: string;
   readonly rendered: Bitmap;
   readonly metrics: QualityMetrics;
+}
+
+interface AnimationSelection {
+  readonly candidate: AnimationCandidate;
+  readonly scripts: readonly string[];
+  readonly ranges?: readonly (readonly [number, number])[];
+  readonly encoding: 'full' | 'keyframe-diff';
 }
 
 function candidateBetter(candidate: Candidate, best: Candidate | undefined): boolean {
@@ -410,9 +418,17 @@ function animationCandidateBetter(candidate: AnimationCandidate, best: Animation
   if (!best) return true;
   const qualityDifference = candidate.metrics.ssim - best.metrics.ssim;
   if (Math.abs(qualityDifference) > 1e-12) return qualityDifference > 0;
-  const psnrDifference = candidate.metrics.psnr - best.metrics.psnr;
-  if (Math.abs(psnrDifference) > 1e-12) return psnrDifference > 0;
   return candidate.lua.length < best.lua.length;
+}
+
+function animationSelectionBetter(candidate: AnimationSelection, best: AnimationSelection | undefined): boolean {
+  if (!best) return true;
+  if (candidate.scripts.length !== best.scripts.length) return candidate.scripts.length < best.scripts.length;
+  const qualityDifference = candidate.candidate.metrics.ssim - best.candidate.metrics.ssim;
+  if (Math.abs(qualityDifference) > 1e-12) return qualityDifference > 0;
+  const candidateChars = candidate.scripts.reduce((sum, script) => sum + script.length, 0);
+  const bestChars = best.scripts.reduce((sum, script) => sum + script.length, 0);
+  return candidateChars < bestChars;
 }
 
 interface PreparedAnimation {
@@ -504,7 +520,7 @@ function splitLosslessAnimation(
       if (candidate.lua.length > budget || !Number.isFinite(costs[start])) continue;
       const cost = (costs[start] as number) + candidate.lua.length;
       const count = (counts[start] as number) + 1;
-      if (cost < (costs[end] as number) || (cost === costs[end] && count < (counts[end] as number))) {
+      if (count < (counts[end] as number) || (count === counts[end] && cost < (costs[end] as number))) {
         costs[end] = cost;
         counts[end] = count;
         previous[end] = start;
@@ -724,14 +740,39 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const maxColours = Math.max(1, Math.floor(options.maxColours ?? 256));
   const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
   const ticksPerFrame = Number.isFinite(options.ticksPerFrame) ? Math.max(1, Math.floor(options.ticksPerFrame as number)) : 6;
-  let best: AnimationCandidate | undefined;
+  let best: AnimationSelection | undefined;
   let shortest: AnimationCandidate | undefined;
+  const dictionaryCandidates: { readonly prepared: PreparedAnimation; readonly palette: readonly Rgb[]; readonly evaluated: ReturnType<typeof evaluateAnimation>; readonly order: number }[] = [];
   let lastPalette: readonly Rgb[] = [[0, 0, 0]];
 
-  const consider = (palette: readonly Rgb[], indices: readonly Uint16Array[]): void => {
-    const evaluated = evaluateAnimation(prepareAnimation(frames, palette, indices), palette, strategies, ticksPerFrame, budget);
+  const consider = (palette: readonly Rgb[], indices: readonly Uint16Array[], dictionaryEligible = true): void => {
+    const prepared = prepareAnimation(frames, palette, indices);
+    const evaluated = evaluateAnimation(prepared, palette, strategies, ticksPerFrame, budget);
     if (!shortest || evaluated.shortest.lua.length < shortest.lua.length) shortest = evaluated.shortest;
-    if (evaluated.best && animationCandidateBetter(evaluated.best, best)) best = evaluated.best;
+    if (evaluated.best) {
+      const selection: AnimationSelection = { candidate: evaluated.best, scripts: [evaluated.best.lua], encoding: evaluated.best.encoding };
+      if (animationSelectionBetter(selection, best)) best = selection;
+    }
+    if (dictionaryEligible) dictionaryCandidates.push({ prepared, palette, evaluated, order: dictionaryCandidates.length });
+  };
+
+  const considerDictionary = (entry: typeof dictionaryCandidates[number]): void => {
+      const { prepared, palette, evaluated } = entry;
+      const split = splitLosslessAnimation(
+        prepared.fullOps,
+        prepared.diffOps,
+        prepared.frameIndices,
+        width,
+        height,
+        budget,
+        ticksPerFrame,
+        palette.map((colour) => colour.join(',')),
+      );
+      if (split.scripts.every((script) => script.length <= budget)) {
+        const candidate = evaluated.best ?? evaluated.shortest;
+        const selection: AnimationSelection = { candidate, scripts: split.scripts, ranges: split.ranges, encoding: split.encoding };
+        if (animationSelectionBetter(selection, best)) best = selection;
+      }
   };
 
   if (options.maxColours === undefined && frames.reduce((area, frame) => area + frame.width * frame.height, 0) <= 2048 && work.take()) {
@@ -746,42 +787,54 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
     for (const blockSize of blockSizes(frames[0] as Bitmap)) {
       if (!work.take()) break outer;
       const indices = blockSize === 1 ? labels : frames.map((frame) => blockify(frame, quantised.palette, blockSize));
-      consider(quantised.palette, indices);
+      consider(quantised.palette, indices, blockSize === 1);
     }
   }
 
-  const singleScriptBest = best;
-  const selected = singleScriptBest ?? shortest;
-  if (!selected) {
+  dictionaryCandidates
+    .sort((left, right) => {
+      const qualityDifference = right.prepared.metrics.ssim - left.prepared.metrics.ssim;
+      return Math.abs(qualityDifference) > 1e-12 ? qualityDifference : left.order - right.order;
+    })
+    .slice(0, DICTIONARY_FIT_CANDIDATE_LIMIT)
+    .forEach(considerDictionary);
+
+  if (!best && !shortest) {
     const fallbackIndices = frames.map((frame) => new Uint16Array(frame.width * frame.height));
-    best = evaluateAnimation(prepareAnimation(frames, lastPalette, fallbackIndices), lastPalette, strategies, ticksPerFrame, Number.MAX_SAFE_INTEGER).shortest;
-  } else best = selected;
-  const split = singleScriptBest ? undefined : splitLosslessAnimation(
-    best.fullOps,
-    best.diffOps,
-    best.frameIndices,
-    width,
-    height,
-    budget,
-    ticksPerFrame,
-    best.palette.map((colour) => colour.join(',')),
-  );
-  const scripts = split?.scripts ?? [best.lua];
+    const fallback = evaluateAnimation(prepareAnimation(frames, lastPalette, fallbackIndices), lastPalette, strategies, ticksPerFrame, Number.MAX_SAFE_INTEGER).shortest;
+    best = { candidate: fallback, scripts: [fallback.lua], encoding: fallback.encoding };
+  }
+  const fallbackCandidate = shortest;
+  if (!best && fallbackCandidate) {
+    const fallback = splitLosslessAnimation(
+      fallbackCandidate.fullOps,
+      fallbackCandidate.diffOps,
+      fallbackCandidate.frameIndices,
+      width,
+      height,
+      budget,
+      ticksPerFrame,
+      fallbackCandidate.palette.map((colour) => colour.join(',')),
+    );
+    best = { candidate: fallbackCandidate, scripts: fallback.scripts, ranges: fallback.ranges, encoding: fallback.encoding };
+  }
+  const selected = best as AnimationSelection;
+  const scripts = selected.scripts;
   const lua = scripts[0] as string;
   const charCount = lua.length;
   const elapsedMs = performance.now() - started;
-  const frameOps = best.playbackOps.map((ops) => ops.length);
-  const allOps = best.playbackOps.flat();
+  const frameOps = selected.candidate.playbackOps.map((ops) => ops.length);
+  const allOps = selected.candidate.playbackOps.flat();
   return {
     lua,
     scripts,
     totalCharCount: scripts.reduce((sum, script) => sum + script.length, 0),
     charCount,
     withinBudget: scripts.every((script) => script.length <= budget),
-    strategy: best.strategy,
-    palette: best.palette,
-    rendered: best.rendered,
-    metrics: best.metrics,
+    strategy: selected.candidate.strategy,
+    palette: selected.candidate.palette,
+    rendered: selected.candidate.rendered,
+    metrics: selected.candidate.metrics,
     stats: {
       ops: allOps.length,
       setColourCalls: allOps.filter((op) => op.type === 'setColour').length,
@@ -789,9 +842,9 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       elapsedMs,
       frameCount: frames.length,
       frameOps,
-      encoding: split?.encoding ?? best.encoding,
-      fullFrameChars: emitAnimationLua(best.fullOps, best.strategy, ticksPerFrame, false).length,
-      scriptFrameRanges: split?.ranges,
+      encoding: selected.encoding,
+      fullFrameChars: emitAnimationLua(selected.candidate.fullOps, selected.candidate.strategy, ticksPerFrame, false).length,
+      scriptFrameRanges: selected.ranges,
       timeBudgetTruncated: work.timeBudgetTruncated(),
     },
   };
