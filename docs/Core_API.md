@@ -25,7 +25,14 @@ export interface ConvertOptions {
   dither?: 'none' | 'floyd-steinberg';
   /** 試行する emit 戦略。既定は全部試して最安を採る */
   strategies?: readonly EmitStrategy[];
-  /** 探索の打ち切り時間 (ms)。既定 5000 */
+  /**
+   * 探索の強さ。既定 5000。
+   *
+   * 名前は歴史的経緯であり、実時間ではない。探索はカウント式の作業予算だけで
+   * 打ち切られ、変換経路は一切時計を読まない。この値は作業予算の倍率
+   * `sqrt(min(1, timeBudgetMs / 5000))` として決定的に効く。したがって
+   * 実効範囲は 1〜5000 であり、5000 を超える値は 5000 と同一の出力になる。
+   */
   timeBudgetMs?: number;
   /** 決定性のための乱数種。既定 0 */
   seed?: number;
@@ -86,9 +93,14 @@ export function psnr(a: Bitmap, b: Bitmap): number;
 ## 不変条件（テストで守る）
 
 1. `result.charCount === result.lua.length`
-2. `result.withinBudget === (result.charCount <= (options.budget ?? 8192))`
+2. 単一スクリプトの結果では
+   `result.withinBudget === (result.charCount <= (options.budget ?? 8192))`。
+   複数スクリプトになり得る結果では不変条件 9 が優先する（`charCount` は
+   先頭スクリプトの長さでしかないため、この形は成り立たない）
 3. `render(ops)` の出力は `result.rendered` と完全一致（メトリクスが嘘をつかない）
-4. 同一入力・同一 seed で `convert` の出力 Lua はバイト単位で同一（決定性）
+4. 同一入力・同一 seed で `convert` の出力 Lua はバイト単位で同一（決定性）。これは
+   マシン負荷に依らない。変換経路に実時間による判断は存在せず、`performance.now()`
+   の使用は `stats.elapsedMs` の報告のみである
 5. `budget` を下げたとき `charCount` は単調非増加、`metrics.ssim` は単調非増加
 6. `costOf` は実際に emit した Lua の長さと完全一致
 
