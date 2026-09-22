@@ -472,14 +472,18 @@ function losslessAnimationSegment(
   end: number,
   ticksPerFrame: number,
   colours: readonly string[],
+  frameChannel?: number,
 ): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } {
   const fullOpsForSegment = fullOps.slice(start, end);
   const diffOpsForSegment = [fullOps[start] as readonly DrawOp[], ...diffOps.slice(start + 1, end)];
   const fullCandidates = [
-    emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame),
-    emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame),
-    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame),
+    emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame, frameChannel, start),
+    emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, start),
+    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, start),
   ];
+  if (frameChannel !== undefined) {
+    return { lua: fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string, encoding: 'full' };
+  }
   const diffCandidates = [
     emitAnimationLuaCompact(diffOpsForSegment, ticksPerFrame),
     emitAnimationLuaCompactRectangles(diffOpsForSegment, colours, ticksPerFrame),
@@ -498,6 +502,7 @@ function splitLosslessAnimation(
   budget: number,
   ticksPerFrame: number,
   colours: readonly string[],
+  frameChannel?: number,
 ): LosslessAnimationScripts {
   const frameCount = fullOps.length;
   const cache = new Map<string, { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' }>();
@@ -505,7 +510,7 @@ function splitLosslessAnimation(
     const key = `${start}:${end}`;
     const cached = cache.get(key);
     if (cached) return cached;
-    const result = losslessAnimationSegment(fullOps, diffOps, frameIndices, width, height, start, end, ticksPerFrame, colours);
+    const result = losslessAnimationSegment(fullOps, diffOps, frameIndices, width, height, start, end, ticksPerFrame, colours, frameChannel);
     cache.set(key, result);
     return result;
   };
@@ -528,7 +533,7 @@ function splitLosslessAnimation(
     }
   }
   if (previous[frameCount] === -1) {
-    const scripts = fullOps.map((ops) => emitAnimationLuaCompact([ops], ticksPerFrame));
+    const scripts = fullOps.map((ops, index) => emitAnimationLuaCompact([ops], ticksPerFrame, frameChannel, index));
     return { scripts, ranges: fullOps.map((_, index) => [index, index + 1] as const), encoding: 'full' };
   }
   const scripts: string[] = [];
@@ -667,8 +672,8 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
   const fullOps = options.gamma === true ? prepared.fullOps.map((ops) => monitorInputOps(ops)) : prepared.fullOps;
   const diffOps = options.gamma === true ? prepared.diffOps.map((ops) => monitorInputOps(ops)) : prepared.diffOps;
   const emittedColours = options.gamma === true ? monitorInputPalette(exact.palette).map((colour) => colour.join(',')) : colours;
-  const split = splitLosslessAnimation(fullOps, diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, emittedColours);
-  const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(fullOps, ticksPerFrame)];
+  const split = splitLosslessAnimation(fullOps, diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, emittedColours, options.frameChannel);
+  const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(fullOps, ticksPerFrame, options.frameChannel)];
   const lua = scripts[0] as string;
   const allOps = fullOps.flat();
   const renderedFrames = fullOps.map((ops, index) => options.gamma === true ? renderMonitor(ops, frames[index]?.width ?? 0, frames[index]?.height ?? 0) : render(ops, frames[index]?.width ?? 0, frames[index]?.height ?? 0));
@@ -710,6 +715,7 @@ function convertFramesFitWithLosslessFallback(frames: readonly Bitmap[], options
 /** Convert a sequence with one palette and a measured full-frame/diff choice. */
 export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions & { readonly ticksPerFrame?: number } = {}): ConvertResult {
   if (frames.length === 0) throw new RangeError('At least one frame is required');
+  if (options.frameChannel !== undefined && (!Number.isInteger(options.frameChannel) || options.frameChannel < 1 || options.frameChannel > 32)) throw new RangeError('frameChannel must be an integer from 1 to 32');
   if (frames.length === 1) return convert(frames[0] as Bitmap, options);
   const width = frames[0]?.width ?? 0;
   const height = frames[0]?.height ?? 0;
@@ -727,6 +733,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       },
     };
   }
+  if (options.frameChannel !== undefined) return convertFramesLossless(frames, options, started);
   if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
 
   const budget = options.budget ?? DEFAULT_BUDGET;

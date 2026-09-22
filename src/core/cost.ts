@@ -276,31 +276,32 @@ function compactAnimationPrefix(uses: ReadonlySet<string>, palette: readonly str
   return `S=screen ${colour}${aliases.length > 0 ? ` ${aliases.join(' ')}` : ''} `;
 }
 
-function compactAnimationTick(ticksPerFrame: number, frameCount: number): string {
+function compactAnimationTick(ticksPerFrame: number, frameCount: number, frameChannel?: number): string {
+  if (frameChannel !== undefined) return `f=0 function onTick()f=input.getNumber(${frameChannel})end `;
   return `f=0 t=0 function onTick()t=t+1 if t==${ticksPerFrame} then t=0 f=(f+1)%${frameCount} end end `;
 }
 
-function compactAnimationBranches(bodies: readonly { readonly body: string }[]): string {
-  return bodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then ${entry.body}`).join('');
+function compactAnimationBranches(bodies: readonly { readonly body: string }[], frameOffset = 0): string {
+  return bodies.map((entry, index) => `${index === 0 ? 'if' : 'elseif'} f==${frameOffset + index} then ${entry.body}`).join('');
 }
 
 /** Emit a compact, self-contained animation used by lossless multi-script output. */
-export function emitAnimationLuaCompact(frameOps: readonly (readonly DrawOp[])[], ticksPerFrame = 6): string {
+export function emitAnimationLuaCompact(frameOps: readonly (readonly DrawOp[])[], ticksPerFrame = 6, frameChannel?: number, frameOffset = 0): string {
   if (frameOps.length === 0) return 'function onDraw()end';
   const plainBodies = frameOps.map((ops) => compactAnimationBody(ops, undefined));
   const uses = new Set<string>(plainBodies.flatMap((entry) => [...entry.uses]));
-  const plain = `${compactAnimationPrefix(uses, undefined)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(plainBodies)}end end`;
+  const plain = `${compactAnimationPrefix(uses, undefined)}${compactAnimationTick(ticksPerFrame, frameOps.length, frameChannel)}function onDraw()${compactAnimationBranches(plainBodies, frameOffset)}end end`;
   const colours = [...new Set(frameOps.flatMap((ops) => ops.filter((op): op is Extract<DrawOp, { type: 'setColour' }> => op.type === 'setColour' && op.a === undefined).map((op) => `${op.r},${op.g},${op.b}`)))];
   if (colours.length === 0) return plain;
   const paletteBodies = frameOps.map((ops) => compactAnimationBody(ops, colours));
   const paletteUses = new Set<string>(paletteBodies.flatMap((entry) => [...entry.uses]));
-  const palette = `${compactAnimationPrefix(paletteUses, colours)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(paletteBodies)}end end`;
+  const palette = `${compactAnimationPrefix(paletteUses, colours)}${compactAnimationTick(ticksPerFrame, frameOps.length, frameChannel)}function onDraw()${compactAnimationBranches(paletteBodies, frameOffset)}end end`;
   const greyscale = colours.every((value) => {
     const channels = value.split(',');
     return channels[0] === channels[1] && channels[1] === channels[2];
   });
   const greyPalette = greyscale
-    ? `${compactAnimationPrefix(paletteUses, colours, true)}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${compactAnimationBranches(paletteBodies)}end end`
+    ? `${compactAnimationPrefix(paletteUses, colours, true)}${compactAnimationTick(ticksPerFrame, frameOps.length, frameChannel)}function onDraw()${compactAnimationBranches(paletteBodies, frameOffset)}end end`
     : '';
   return [plain, palette, greyPalette].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string;
 }
@@ -344,6 +345,8 @@ export function emitAnimationLuaCompactRectangles(
   frameOps: readonly (readonly DrawOp[])[],
   colours: readonly string[],
   ticksPerFrame = 6,
+  frameChannel?: number,
+  frameOffset = 0,
 ): string {
   if (frameOps.length === 0) return 'function onDraw()end';
   const greyscale = colours.every((value) => {
@@ -352,8 +355,8 @@ export function emitAnimationLuaCompactRectangles(
   });
   const prefix = compactRectanglePrefix(colours, greyscale);
   const data = frameOps.map((ops) => encodeCompactRectangles(ops, colours));
-  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then${value === '' ? '' : `D("${value}")`}`).join('');
-  return `${prefix}${compactAnimationTick(ticksPerFrame, frameOps.length)}function onDraw()${branches}end end`;
+  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${frameOffset + index} then${value === '' ? '' : `D("${value}")`}`).join('');
+  return `${prefix}${compactAnimationTick(ticksPerFrame, frameOps.length, frameChannel)}function onDraw()${branches}end end`;
 }
 
 const COLUMN_DICTIONARY_HIGH_ALPHABET = '#$%&()*,-.:;<=>?@[]^_`{|}~';
@@ -425,6 +428,8 @@ export function emitAnimationLuaColumnDictionary(
   height: number,
   colours: readonly string[],
   ticksPerFrame = 6,
+  frameChannel?: number,
+  frameOffset = 0,
 ): string {
   if (frameIndices.length === 0 || width <= 0 || height <= 0 || colours.length > 128) return '';
   const frameKeys: string[][] = [];
@@ -472,6 +477,6 @@ export function emitAnimationLuaColumnDictionary(
     ? `if z=="'"then u=${COMPACT_RECT_ALPHABET.length + COLUMN_DICTIONARY_HIGH_ALPHABET.length}+string.find(A,string.sub(s,j+1,j+1),1,true)-1 j=j+1 else u=${COMPACT_RECT_ALPHABET.length}+string.find(H,z,1,true)-1 end`
     : `u=${COMPACT_RECT_ALPHABET.length}+string.find(H,z,1,true)-1`;
   const prefix = `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" B="${runs.join('')}" ${palette}} q="${patterns.join(COLUMN_REFERENCE_RUN_MARKER)}"local Q={}for z in string.gmatch(q,"[^!]+")do Q[#Q+1]=z end F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=string.sub(d,i,i)local n=string.find(A,z,1,true)if n then n=n-1 else local h=string.find(H,z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+string.find(A,string.sub(d,i+1,i+1),1,true)-1 i=i+1 end i=i+1 local k=1 if string.sub(d,i,i)==M then k=string.find(A,string.sub(d,i+1,i+1),1,true)i=i+2 end local s=Q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local z=string.sub(s,j,j)local u=string.find(A,z,1,true)if u then u=u-1 else ${runDecoder} end local v=(string.find(A,string.sub(B,u*2+1,u*2+1),1,true)-1)*64+string.find(A,string.sub(B,u*2+2,u*2+2),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+1 end x=x+1 end end end `;
-  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${index} then D("${value}")`).join('');
-  return `${prefix}${compactAnimationTick(ticksPerFrame, frameIndices.length)}function onDraw()${branches}end end`;
+  const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${frameOffset + index} then D("${value}")`).join('');
+  return `${prefix}${compactAnimationTick(ticksPerFrame, frameIndices.length, frameChannel)}function onDraw()${branches}end end`;
 }

@@ -16,6 +16,8 @@ export type EmitStrategy = 'direct' | 'table' | 'packed';
 export type ConvertMode = 'lossless' | 'fit';
 
 export interface ConvertOptions {
+  /** 外部からフレーム番号を受け取るコンポジット番号チャンネル (1-32)。未指定なら従来どおり内部カウンタで自動再生する。 */
+  readonly frameChannel?: number;
   readonly gamma?: boolean;
   readonly mode?: ConvertMode;
   readonly budget?: number;
