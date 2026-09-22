@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `packed-keyframe-direct-diff.md` — packed keyframeと少数の矩形差分を混在させ、astralを1,842文字削減する決定
 - `three-frame-shared-packed.md` — 3フレーム共有packedとpalette順序探索によりastralを2,824文字削減する決定
 - `shared-palette-packed.md` — 1〜2フレームのpacked palette・decoder共有によりastralを2,703文字削減する決定
 - `two-frame-packed-animation.md` — 1〜2フレームのpacked共有候補によりastralを4,716文字削減する決定

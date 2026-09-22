@@ -299,6 +299,18 @@ export function emitAnimationLua(
   return animationBody(bodies, ticksPerFrame);
 }
 
+/** Use packed pixels for a segment keyframe and direct rectangles for its sparse later diffs. */
+export function emitAnimationLuaPackedKeyframe(
+  fullKeyframeOps: readonly DrawOp[],
+  diffOps: readonly (readonly DrawOp[])[],
+  ticksPerFrame = 6,
+): string {
+  if (diffOps.length === 0) return animationBody([''], ticksPerFrame);
+  const keyframe = functionBody(emitLua(fullKeyframeOps, 'packed'));
+  const bodies = [keyframe, ...diffOps.slice(1).map((ops) => emitDirectBody(ops, { colour: 'screen.setColor', rectF: 'screen.drawRectF', rect: 'screen.drawRect', line: 'screen.drawLine' }))];
+  return animationBody(bodies, ticksPerFrame);
+}
+
 function compactAnimationBody(ops: readonly DrawOp[], palette: readonly string[] | undefined): { readonly body: string; readonly uses: Set<string> } {
   let currentColour: string | undefined;
   const statements: string[] = [];
