@@ -72,9 +72,12 @@ describe('convertFrames', () => {
 
     expect(result.lua).toContain('q="');
     expect(result.lua).not.toContain('q={');
-    expect(result.lua).toContain('local Q={}for z in string.gmatch(q,"[^!]+")do Q[#Q+1]=z end');
+    expect(result.lua).toContain('local Q={}for z in q:gmatch("[^!]+")do Q[#Q+1]=z end');
     expect(result.lua).toContain('local s=Q[n+1]');
-    expect(result.lua).not.toContain('local s for z in string.gmatch');
+    expect(result.lua).toContain('A:find(z,1,true)');
+    expect(result.lua).toContain('d:sub(i,i)');
+    expect(result.lua).not.toContain('string.find');
+    expect(result.lua).not.toContain('string.sub');
     expect(result.lua).toContain('d={');
     expect(result.lua).toContain('D(d[f+1])');
     expect(result.lua).not.toContain('elseif f==');
