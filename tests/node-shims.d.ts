@@ -2,7 +2,7 @@ declare module 'node:child_process' {
   export function spawnSync(
     command: string,
     args: readonly string[],
-    options: { readonly input: string; readonly encoding: 'utf8' },
+    options: { readonly input: string; readonly encoding: 'utf8'; readonly maxBuffer?: number },
   ): { readonly error?: { readonly code?: string }; readonly status: number | null; readonly stderr: string; readonly stdout?: string };
 }
 

@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `lz-frame-stream.md` — 全フレームを共有LZストリームと4文字/RGB paletteで符号化し、astral_openingを単一・lossless 9,966文字へ圧縮する決定
 - `packed-keyframe-direct-diff.md` — packed keyframeと少数の矩形差分を混在させ、astralを1,842文字削減する決定
 - `three-frame-shared-packed.md` — 3フレーム共有packedとpalette順序探索によりastralを2,824文字削減する決定
 - `shared-palette-packed.md` — 1〜2フレームのpacked palette・decoder共有によりastralを2,703文字削減する決定

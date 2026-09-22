@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
-import { convertFrames, render, type Bitmap } from '../src/core/index';
+import { convertFrames, render, replayLuaFrames, type Bitmap } from '../src/core/index';
 import { readPng } from '../bench/compare/png';
 import { executeLua } from './lua-executor';
 
@@ -29,14 +29,19 @@ describe('外部フレーム番号', () => {
     expect(undefinedChannel.totalCharCount).toBe(omitted.totalCharCount);
   });
 
-  it('astral_opening の高色数フレームも lossless で各スクリプトを予算内に収める', () => {
+  it('astral_opening を単一のlossless Lua 1万文字未満で再生する', () => {
     const root = '/Users/yuki/doc/astral_opening';
     if (!existsSync(root)) return;
     const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
-    const result = convertFrames(frames, { mode: 'lossless', budget: 8192, seed: 0 });
+    const result = convertFrames(frames, { mode: 'lossless', budget: 10_000, seed: 0 });
     expect(result.withinBudget).toBe(true);
-    expect(result.scripts.every((script) => script.length <= 8192)).toBe(true);
-    expect(result.totalCharCount).toBeLessThan(23_000);
+    expect(result.scripts).toHaveLength(1);
+    expect(result.totalCharCount).toBeLessThan(10_000);
+    const execution = executeLua(result.lua, { frameCount: frames.length, ticksPerFrame: 6, drawInitialFrame: true, width: 96, height: 32 });
+    if (execution.skipped) return;
+    expect(execution.frames).toHaveLength(frames.length);
+    const rendered = replayLuaFrames(execution.frames, 96, 32);
+    for (let index = 0; index < frames.length; index += 1) expect(rendered[index]?.data).toEqual(frames[index]?.data);
   });
 
   it('Lua で順不同のグローバル添字を完全フレームとして描画し、範囲外と小数は何も描かない', () => {

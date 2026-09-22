@@ -74,7 +74,7 @@ end
   const path = `/private/tmp/stormpix-lua-scripts-${Date.now()}-${Math.floor(Math.random() * 1000000)}.lua`;
   writeFileSync(path, harness, 'utf8');
   try {
-    const result = spawnSync('lua', [path], { input: '', encoding: 'utf8' });
+    const result = spawnSync('lua', [path], { input: '', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     if (result.error?.code === 'ENOENT') return { frames: [], scriptIndexes: [], skipped: true, message: 'SKIP: lua executable is absent; Lua round-trip verification was skipped' };
     if (result.status !== 0) throw new Error(`Lua execution failed: ${result.stderr}`);
     const records = (result.stdout ?? '').split(/\r?\n/).filter((line) => line.length > 0).map((line) => {
@@ -136,7 +136,7 @@ end
     const path = `/private/tmp/stormpix-lua-${Date.now()}-${Math.floor(Math.random() * 1000000)}.lua`;
     writeFileSync(path, harness, 'utf8');
     try {
-      const result = spawnSync(this.command, [path], { input: '', encoding: 'utf8' });
+      const result = spawnSync(this.command, [path], { input: '', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
       if (result.error?.code === 'ENOENT') {
         const message = 'SKIP: lua executable is absent; Lua round-trip verification was skipped';
         console.warn(message);

@@ -1,5 +1,5 @@
 import { cover, type LabelImage } from './cover.ts';
-import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitAnimationLuaPackedKeyframe, emitAnimationLuaSharedPacked, emitLua } from './cost.ts';
+import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitAnimationLuaLzFrames, emitAnimationLuaPackedKeyframe, emitAnimationLuaSharedPacked, emitLua } from './cost.ts';
 import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
@@ -511,8 +511,13 @@ function splitLosslessAnimation(
   ticksPerFrame: number,
   colours: readonly string[],
   frameChannel?: number,
+  enableLz = false,
 ): LosslessAnimationScripts {
   const frameCount = fullOps.length;
+  if (enableLz && frameChannel === undefined && frameCount >= 30) {
+    const lz = emitAnimationLuaLzFrames(frameIndices, width, height, colours, ticksPerFrame);
+    if (lz.length <= budget) return { scripts: [lz], ranges: [[0, frameCount]], encoding: 'full' };
+  }
   const cache = new Map<string, { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' }>();
   const segment = (start: number, end: number): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } => {
     const key = `${start}:${end}`;
@@ -680,7 +685,7 @@ function convertFramesLossless(frames: readonly Bitmap[], options: ConvertOption
   const fullOps = options.gamma === true ? prepared.fullOps.map((ops) => monitorInputOps(ops)) : prepared.fullOps;
   const diffOps = options.gamma === true ? prepared.diffOps.map((ops) => monitorInputOps(ops)) : prepared.diffOps;
   const emittedColours = options.gamma === true ? monitorInputPalette(exact.palette).map((colour) => colour.join(',')) : colours;
-  const split = splitLosslessAnimation(fullOps, diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, emittedColours, options.frameChannel);
+  const split = splitLosslessAnimation(fullOps, diffOps, exact.indices, frames[0]?.width ?? 0, frames[0]?.height ?? 0, budget, ticksPerFrame, emittedColours, options.frameChannel, true);
   const scripts = split.scripts.length > 0 ? split.scripts : [emitAnimationLuaCompact(fullOps, ticksPerFrame, options.frameChannel)];
   const lua = scripts[0] as string;
   const allOps = fullOps.flat();

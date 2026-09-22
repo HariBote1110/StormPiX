@@ -177,6 +177,97 @@ export function emitAnimationLuaSharedPacked(
   return `S=screen A="${BASE64_ALPHABET}"p={${palette}}F=S.drawRectF ${decoder}${compactAnimationTick(ticksPerFrame, frameCount)}${playback}`;
 }
 
+function encodeLzFrameStream(values: readonly number[]): string {
+  const references = new Map<string, number[]>();
+  const keyAt = (index: number): string => index + 2 < values.length ? `${values[index]},${values[index + 1]},${values[index + 2]}` : '';
+  const addReference = (index: number): void => {
+    const key = keyAt(index);
+    if (key === '') return;
+    const indexes = references.get(key) ?? [];
+    indexes.push(index);
+    if (indexes.length > 4096) indexes.shift();
+    references.set(key, indexes);
+  };
+  const pair = (value: number): string => `${BASE64_ALPHABET[Math.floor(value / 64)] ?? ''}${BASE64_ALPHABET[value % 64] ?? ''}`;
+  let result = '';
+  let index = 0;
+  while (index < values.length) {
+    const candidates = references.get(keyAt(index)) ?? [];
+    let length = 0;
+    let distance = 0;
+    for (let candidateIndex = candidates.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+      const candidate = candidates[candidateIndex] as number;
+      const candidateDistance = index - candidate;
+      if (candidateDistance > 4096) continue;
+      let candidateLength = 0;
+      while (candidateLength < 4098 && index + candidateLength < values.length && values[candidate + candidateLength] === values[index + candidateLength]) candidateLength += 1;
+      if (candidateLength > length) {
+        length = candidateLength;
+        distance = candidateDistance;
+        if (length === 4098) break;
+      }
+    }
+    if (length >= 3) {
+      result += length <= 34 ? `${BASE64_ALPHABET[length + 29] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
+      index += length;
+      continue;
+    }
+    const start = index;
+    do {
+      addReference(index);
+      index += 1;
+      if (index - start === 32 || index >= values.length) break;
+      const lookahead = references.get(keyAt(index)) ?? [];
+      length = 0;
+      for (let candidateIndex = lookahead.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+        const candidate = lookahead[candidateIndex] as number;
+        if (index - candidate > 4096) continue;
+        let candidateLength = 0;
+        while (candidateLength < 4098 && index + candidateLength < values.length && values[candidate + candidateLength] === values[index + candidateLength]) candidateLength += 1;
+        if (candidateLength > length) length = candidateLength;
+      }
+    } while (length < 3);
+    result += BASE64_ALPHABET[index - start - 1] ?? '';
+    for (let offset = start; offset < index; offset += 1) result += pair(values[offset] as number);
+  }
+  return result;
+}
+
+function encodeRgbPalette(colours: readonly string[], indexes: readonly number[]): string {
+  let result = '';
+  for (const index of indexes) {
+    const channels = (colours[index] ?? '0,0,0').split(',').map(Number);
+    const value = ((channels[0] ?? 0) * 65_536) + ((channels[1] ?? 0) * 256) + (channels[2] ?? 0);
+    result += BASE64_ALPHABET[Math.floor(value / 262_144)] ?? '';
+    result += BASE64_ALPHABET[Math.floor(value / 4096) % 64] ?? '';
+    result += BASE64_ALPHABET[Math.floor(value / 64) % 64] ?? '';
+    result += BASE64_ALPHABET[value % 64] ?? '';
+  }
+  return result;
+}
+
+/** Encode all animation frames as one LZ stream with a compact RGB palette. */
+export function emitAnimationLuaLzFrames(
+  frameIndices: readonly Uint16Array[],
+  width: number,
+  height: number,
+  colours: readonly string[],
+  ticksPerFrame = 6,
+): string {
+  if (frameIndices.length === 0 || width <= 0 || height <= 0) return '';
+  const sourceIndexes = [...new Set(frameIndices.flatMap((indices) => Array.from(indices)))];
+  if (sourceIndexes.length === 0 || sourceIndexes.length > 512) return '';
+  const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
+  const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
+  const data = encodeLzFrameStream(values);
+  const palette = encodeRgbPalette(colours, sourceIndexes);
+  const pixels = width * height;
+  const decoder = `S=screen A="${BASE64_ALPHABET}"P="${palette}"d="${data}"p={}o={}m=math.floor for i=1,#P,4 do p[#p+1]=(A:find(P:sub(i,i),1,1)-1)*262144+(A:find(P:sub(i+1,i+1),1,1)-1)*4096+(A:find(P:sub(i+2,i+2),1,1)-1)*64+A:find(P:sub(i+3,i+3),1,1)-1 end i=1 while i<=#d do local z=d:sub(i,i)if z=="!"then local x=(A:find(d:sub(i+1,i+1),1,1)-1)*64+A:find(d:sub(i+2,i+2),1,1)local n=(A:find(d:sub(i+3,i+3),1,1)-1)*64+A:find(d:sub(i+4,i+4),1,1)+2 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=A:find(z,1,1)-1 i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1)-1 i=i+2 end else local x=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1) local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
+  const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then local v=p[c+1]S.setColor(m(v/65536),m(v/256)%256,v%256)q=c end F(z%${width},m(z/${width}),1,1)end end`;
+  return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
+}
+
 function emitTable(ops: readonly DrawOp[]): string {
   if (!isRectProgram(ops)) return emitDirect(ops);
   let colour: Extract<DrawOp, { type: 'setColour' }> | undefined;
@@ -437,13 +528,21 @@ const COLUMN_DICTIONARY_HIGH_ALPHABET = '#$%&()*,-.:;<=>?@[]^_`{|}~';
 const COLUMN_REFERENCE_RUN_MARKER = '!';
 
 function encodeColumnPattern(values: readonly number[], colourCount: number): string {
+  const width = colourCount <= 128 ? 2 : colourCount <= 512 ? 3 : 0;
+  if (width === 0) return '';
   let result = '';
   let colour = values[0] ?? 0;
   let height = 0;
   const flush = (): void => {
     const value = colour * 32 + height - 1;
-    result += COMPACT_RECT_ALPHABET[Math.floor(value / 64)] ?? '0';
-    result += COMPACT_RECT_ALPHABET[value % 64] ?? '0';
+    if (width === 2) {
+      result += COMPACT_RECT_ALPHABET[Math.floor(value / 64)] ?? '0';
+      result += COMPACT_RECT_ALPHABET[value % 64] ?? '0';
+    } else {
+      result += COMPACT_RECT_ALPHABET[Math.floor(value / 4096)] ?? '0';
+      result += COMPACT_RECT_ALPHABET[Math.floor(value / 64) % 64] ?? '0';
+      result += COMPACT_RECT_ALPHABET[value % 64] ?? '0';
+    }
   };
   for (const value of values) {
     if (value === colour && height < 32) {
@@ -455,7 +554,7 @@ function encodeColumnPattern(values: readonly number[], colourCount: number): st
     height = 1;
   }
   if (height > 0) flush();
-  return colourCount <= 128 ? result : '';
+  return result;
 }
 
 function columnReference(index: number): string {
@@ -476,6 +575,16 @@ function runReference(index: number, extended: boolean): string {
 function encodeRunPattern(pattern: string, indexes: ReadonlyMap<string, number>, extended: boolean): string {
   let result = '';
   for (let offset = 0; offset < pattern.length; offset += 2) result += runReference(indexes.get(pattern.slice(offset, offset + 2)) as number, extended);
+  return result;
+}
+
+function encodeWideRunPattern(pattern: string, indexes: ReadonlyMap<string, number>): string {
+  let result = '';
+  for (let offset = 0; offset < pattern.length; offset += 3) {
+    const index = indexes.get(pattern.slice(offset, offset + 3)) as number;
+    result += COMPACT_RECT_ALPHABET[Math.floor(index / COMPACT_RECT_ALPHABET.length)] ?? '';
+    result += COMPACT_RECT_ALPHABET[index % COMPACT_RECT_ALPHABET.length] ?? '';
+  }
   return result;
 }
 
@@ -505,7 +614,7 @@ export function emitAnimationLuaColumnDictionary(
   frameChannel?: number,
   frameOffset = 0,
 ): string {
-  if (frameIndices.length === 0 || width <= 0 || height <= 0 || colours.length > 128) return '';
+  if (frameIndices.length === 0 || width <= 0 || height <= 0 || colours.length > 512) return '';
   const frameKeys: string[][] = [];
   const frequencies = new Map<string, number>();
   for (const indices of frameIndices) {
@@ -525,9 +634,11 @@ export function emitAnimationLuaColumnDictionary(
   });
   const indexes = new Map(orderedKeys.map((key, index) => [key, index] as const));
   const rawPatterns = orderedKeys.map((key) => encodeColumnPattern(key.split(',').map(Number), colours.length));
+  const wideRuns = colours.length > 128;
+  const runWidth = wideRuns ? 3 : 2;
   const runFrequencies = new Map<string, number>();
-  for (const pattern of rawPatterns) for (let offset = 0; offset < pattern.length; offset += 2) {
-    const run = pattern.slice(offset, offset + 2);
+  for (const pattern of rawPatterns) for (let offset = 0; offset < pattern.length; offset += runWidth) {
+    const run = pattern.slice(offset, offset + runWidth);
     runFrequencies.set(run, (runFrequencies.get(run) ?? 0) + 1);
   }
   const runs = [...runFrequencies.keys()].sort((left, right) => {
@@ -536,21 +647,22 @@ export function emitAnimationLuaColumnDictionary(
   });
   const runIndexes = new Map(runs.map((run, index) => [run, index] as const));
   const extendedRuns = runs.length > COMPACT_RECT_ALPHABET.length + COLUMN_DICTIONARY_HIGH_ALPHABET.length;
-  const patterns = rawPatterns.map((pattern) => encodeRunPattern(pattern, runIndexes, extendedRuns));
-  if (patterns.some((pattern) => pattern === '') || orderedKeys.some((_, index) => columnReference(index) === '') || runs.some((_, index) => runReference(index, extendedRuns) === '')) return '';
+  const patterns = rawPatterns.map((pattern) => wideRuns ? encodeWideRunPattern(pattern, runIndexes) : encodeRunPattern(pattern, runIndexes, extendedRuns));
+  if (patterns.some((pattern) => pattern === '') || orderedKeys.some((_, index) => columnReference(index) === '') || (!wideRuns && runs.some((_, index) => runReference(index, extendedRuns) === '')) || (wideRuns && runs.length > COMPACT_RECT_ALPHABET.length ** 2)) return '';
   const data = frameKeys.map((keys) => encodeColumnReferences(keys, indexes));
-  const greyscale = colours.every((value) => {
+  const greyscale = colours.map((value) => {
     const channels = value.split(',');
     return channels[0] === channels[1] && channels[1] === channels[2];
   });
-  const palette = greyscale
+  const palette = greyscale.every(Boolean)
     ? `p={${colours.map((colour) => colour.split(',')[0]).join(',')}`
-    : `p={${colours.map((colour) => `{${colour}}`).join(',')}`;
-  const colour = greyscale ? 'S.setColor(e,e,e)' : 'S.setColor(e[1],e[2],e[3])';
+    : `p={${colours.map((colour, index) => greyscale[index] ? colour.split(',')[0] : `{${colour}}`).join(',')}`;
+  const colour = greyscale.every(Boolean) ? 'S.setColor(e,e,e)' : 'if type(e)=="number"then S.setColor(e,e,e)else S.setColor(e[1],e[2],e[3])end';
   const runDecoder = extendedRuns
     ? `if z=="'"then u=${COMPACT_RECT_ALPHABET.length + COLUMN_DICTIONARY_HIGH_ALPHABET.length}+A:find(s:sub(j+1,j+1),1,true)-1 j=j+1 else u=${COMPACT_RECT_ALPHABET.length}+H:find(z,1,true)-1 end`
     : `u=${COMPACT_RECT_ALPHABET.length}+H:find(z,1,true)-1`;
-  const prefix = `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" B="${runs.join('')}" ${palette}} q="${patterns.join(COLUMN_REFERENCE_RUN_MARKER)}"local Q={}for z in q:gmatch("[^!]+")do Q[#Q+1]=z end F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=d:sub(i,i)local n=A:find(z,1,true)if n then n=n-1 else local h=H:find(z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+A:find(d:sub(i+1,i+1),1,true)-1 i=i+1 end i=i+1 local k=1 if d:sub(i,i)==M then k=A:find(d:sub(i+1,i+1),1,true)i=i+2 end local s=Q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local z=s:sub(j,j)local u=A:find(z,1,true)if u then u=u-1 else ${runDecoder} end local v=(A:find(B:sub(u*2+1,u*2+1),1,true)-1)*64+A:find(B:sub(u*2+2,u*2+2),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+1 end x=x+1 end end end `;
+  const widePrefix = `S=screen A="${COMPACT_RECT_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" B="${runs.join('')}" ${palette}} q="${patterns.join(COLUMN_REFERENCE_RUN_MARKER)}"local Q={}for z in q:gmatch("[^!]+")do Q[#Q+1]=z end F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local n=(A:find(d:sub(i,i),1,true)-1)*64+A:find(d:sub(i+1,i+1),1,true)-1 i=i+2 local k=1 if d:sub(i,i)==M then k=A:find(d:sub(i+1,i+1),1,true)i=i+2 end local s=Q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local u=(A:find(s:sub(j,j),1,true)-1)*64+A:find(s:sub(j+1,j+1),1,true)-1 local v=(A:find(B:sub(u*3+1,u*3+1),1,true)-1)*4096+(A:find(B:sub(u*3+2,u*3+2),1,true)-1)*64+A:find(B:sub(u*3+3,u*3+3),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+2 end x=x+1 end end end `;
+  const prefix = wideRuns ? widePrefix : `S=screen A="${COMPACT_RECT_ALPHABET}" H="${COLUMN_DICTIONARY_HIGH_ALPHABET}" M="${COLUMN_REFERENCE_RUN_MARKER}" B="${runs.join('')}" ${palette}} q="${patterns.join(COLUMN_REFERENCE_RUN_MARKER)}"local Q={}for z in q:gmatch("[^!]+")do Q[#Q+1]=z end F=S.drawRectF function D(d)local x=0 local i=1 while i<=#d do local z=d:sub(i,i)local n=A:find(z,1,true)if n then n=n-1 else local h=H:find(z,1,true)if not h then return end n=${COMPACT_RECT_ALPHABET.length}+(h-1)*${COMPACT_RECT_ALPHABET.length}+A:find(d:sub(i+1,i+1),1,true)-1 i=i+1 end i=i+1 local k=1 if d:sub(i,i)==M then k=A:find(d:sub(i+1,i+1),1,true)i=i+2 end local s=Q[n+1]for r=1,k do local j=1 local y=0 while j<=#s do local z=s:sub(j,j)local u=A:find(z,1,true)if u then u=u-1 else ${runDecoder} end local v=(A:find(B:sub(u*2+1,u*2+1),1,true)-1)*64+A:find(B:sub(u*2+2,u*2+2),1,true)-1 local c=math.floor(v/32)local h=v%32+1 local e=p[c+1]${colour} F(x,y,1,h)y=y+h j=j+1 end x=x+1 end end end `;
   const branches = data.map((value, index) => `${index === 0 ? 'if' : 'elseif'} f==${frameOffset + index} then D("${value}")`).join('');
   const branchPlayback = `function onDraw()${branches}end end`;
   const frameIndex = frameOffset === 0 ? 'f+1' : `f-${frameOffset - 1}`;
