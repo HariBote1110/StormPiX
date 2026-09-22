@@ -41,7 +41,7 @@ export interface ConvertStats {
   readonly frameOps?: readonly number[];
   readonly encoding?: 'full' | 'keyframe-diff';
   readonly fullFrameChars?: number;
-  /** True when the safety time cap stopped deterministic work early. */
+  /** True when the counted work budget was exhausted. */
   readonly timeBudgetTruncated?: boolean;
   readonly scriptFrameRanges?: readonly (readonly [number, number])[];
   readonly deviceMaxAbsChannelDeviation?: number;

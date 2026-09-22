@@ -20,19 +20,17 @@ interface WorkControl {
 }
 
 function createWorkControl(timeBudgetMs: number, defaultWorkBudget: number, maximumWorkBudget = Number.MAX_SAFE_INTEGER): WorkControl {
-  const started = performance.now();
-  const safetyDeadline = started + Math.max(1, timeBudgetMs);
   const timeRatio = Math.min(1, Math.max(1, timeBudgetMs) / DEFAULT_TIME_BUDGET_MS);
   let remaining = Math.max(1, Math.min(maximumWorkBudget, Math.floor(defaultWorkBudget * Math.sqrt(timeRatio))));
   let truncated = false;
   return {
     take: (): boolean => {
-      if (remaining <= 0) return false;
-      if (performance.now() >= safetyDeadline) {
+      if (remaining <= 0) {
         truncated = true;
         return false;
       }
       remaining -= 1;
+      if (remaining === 0) truncated = true;
       return true;
     },
     timeBudgetTruncated: (): boolean => truncated,

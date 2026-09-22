@@ -171,7 +171,6 @@ describe('convert', () => {
       const previous = results[index - 1] as ReturnType<typeof convert>;
       const current = results[index] as ReturnType<typeof convert>;
       expect(current.metrics.ssim).toBeGreaterThanOrEqual(previous.metrics.ssim - 0.0005);
-      expect(current.stats.elapsedMs).toBeLessThanOrEqual(1200);
     }
   }, 15000);
 

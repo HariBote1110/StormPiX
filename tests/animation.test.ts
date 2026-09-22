@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { convert, convertFrames, ssim, type Bitmap } from '../src/core/index';
 
@@ -25,6 +25,34 @@ function dictionaryFrame(width: number, height: number, shift: number): Bitmap {
     data[offset + 3] = 255;
   }
   return { width, height, data };
+}
+
+function highColourAnimation(): Bitmap[] {
+  const frames: Bitmap[] = [];
+  for (let frame = 0; frame < 30; frame += 1) {
+    const width = 96;
+    const height = 32;
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const colour = ((Math.floor(x / 8) + Math.floor(y / 8) * 12 + frame * 48) % 256) as number;
+      data[offset] = (colour * 47) % 256;
+      data[offset + 1] = (colour * 83) % 256;
+      data[offset + 2] = (colour * 131) % 256;
+      data[offset + 3] = 255;
+    }
+    frames.push({ width, height, data });
+  }
+  return frames;
+}
+
+function convertFramesWithClock(frames: readonly Bitmap[], mode: 'fit' | 'lossless', clock: () => number): ReturnType<typeof convertFrames> {
+  const spy = vi.spyOn(performance, 'now').mockImplementation(clock);
+  try {
+    return convertFrames(frames, { budget: 8192, maxColours: 256, mode, seed: 0, ticksPerFrame: 6 });
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 function luaAvailable(): boolean {
@@ -58,6 +86,21 @@ describe('convertFrames', () => {
     expect(first.charCount).toBe(first.lua.length);
     expect(first.withinBudget).toBe(first.charCount <= 8192);
   });
+
+  it('is byte deterministic for a high-colour animation regardless of clock progress', () => {
+    const frames = highColourAnimation();
+    for (const mode of ['fit', 'lossless'] as const) {
+      const idle = convertFramesWithClock(frames, mode, () => 0);
+      let calls = 0;
+      const loaded = convertFramesWithClock(frames, mode, () => {
+        calls += 1;
+        return calls <= 2 ? 0 : 10_000;
+      });
+      expect(loaded.lua).toBe(idle.lua);
+      expect(loaded.stats.timeBudgetTruncated).toBe(mode === 'fit');
+      expect(idle.stats.timeBudgetTruncated).toBe(mode === 'fit');
+    }
+  }, 30000);
 
   it('uses the first frame for the preview and averages metrics across frames', () => {
     const first = solid(16, 16, 20, 30, 40);
