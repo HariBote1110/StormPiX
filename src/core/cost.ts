@@ -234,17 +234,25 @@ function encodeLzFrameStream(values: readonly number[]): string {
   return result;
 }
 
-function encodeRgbPalette(colours: readonly string[], indexes: readonly number[]): string {
+function encodeLzPalette(colours: readonly string[], indexes: readonly number[]): { readonly data: string; readonly nearGreyscale: boolean } {
+  const values = indexes.map((index) => (colours[index] ?? '0,0,0').split(',').map(Number));
+  const nearGreyscale = values.every((channels) => Math.abs((channels[0] ?? 0) - (channels[1] ?? 0)) <= 1 && Math.abs((channels[2] ?? 0) - (channels[1] ?? 0)) <= 1);
   let result = '';
-  for (const index of indexes) {
-    const channels = (colours[index] ?? '0,0,0').split(',').map(Number);
+  for (const channels of values) {
+    if (nearGreyscale) {
+      const base = channels[1] ?? 0;
+      const value = base * 16 + ((channels[0] ?? 0) - base + 1) * 4 + ((channels[2] ?? 0) - base + 1);
+      result += BASE64_ALPHABET[Math.floor(value / 64)] ?? '';
+      result += BASE64_ALPHABET[value % 64] ?? '';
+      continue;
+    }
     const value = ((channels[0] ?? 0) * 65_536) + ((channels[1] ?? 0) * 256) + (channels[2] ?? 0);
     result += BASE64_ALPHABET[Math.floor(value / 262_144)] ?? '';
     result += BASE64_ALPHABET[Math.floor(value / 4096) % 64] ?? '';
     result += BASE64_ALPHABET[Math.floor(value / 64) % 64] ?? '';
     result += BASE64_ALPHABET[value % 64] ?? '';
   }
-  return result;
+  return { data: result, nearGreyscale };
 }
 
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
@@ -261,9 +269,12 @@ export function emitAnimationLuaLzFrames(
   const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
   const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
   const data = encodeLzFrameStream(values);
-  const palette = encodeRgbPalette(colours, sourceIndexes);
+  const palette = encodeLzPalette(colours, sourceIndexes);
   const pixels = width * height;
-  const decoder = `S=screen A="${BASE64_ALPHABET}"P="${palette}"d="${data}"p={}o={}m=math.floor for i=1,#P,4 do p[#p+1]=(A:find(P:sub(i,i),1,1)-1)*262144+(A:find(P:sub(i+1,i+1),1,1)-1)*4096+(A:find(P:sub(i+2,i+2),1,1)-1)*64+A:find(P:sub(i+3,i+3),1,1)-1 end i=1 while i<=#d do local z=d:sub(i,i)if z=="!"then local x=(A:find(d:sub(i+1,i+1),1,1)-1)*64+A:find(d:sub(i+2,i+2),1,1)local n=(A:find(d:sub(i+3,i+3),1,1)-1)*64+A:find(d:sub(i+4,i+4),1,1)+2 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=A:find(z,1,1)-1 i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1)-1 i=i+2 end else local x=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1) local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
+  const paletteDecoder = palette.nearGreyscale
+    ? `for i=1,#P,2 do local v=(A:find(P:sub(i,i),1,1)-1)*64+A:find(P:sub(i+1,i+1),1,1)-1 local g=m(v/16)p[#p+1]=(g+m(v/4)%4-1)*65536+g*257+v%4-1 end `
+    : `for i=1,#P,4 do p[#p+1]=(A:find(P:sub(i,i),1,1)-1)*262144+(A:find(P:sub(i+1,i+1),1,1)-1)*4096+(A:find(P:sub(i+2,i+2),1,1)-1)*64+A:find(P:sub(i+3,i+3),1,1)-1 end `;
+  const decoder = `S=screen A="${BASE64_ALPHABET}"P="${palette.data}"d="${data}"p={}o={}m=math.floor ${paletteDecoder}i=1 while i<=#d do local z=d:sub(i,i)if z=="!"then local x=(A:find(d:sub(i+1,i+1),1,1)-1)*64+A:find(d:sub(i+2,i+2),1,1)local n=(A:find(d:sub(i+3,i+3),1,1)-1)*64+A:find(d:sub(i+4,i+4),1,1)+2 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=A:find(z,1,1)-1 i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1)-1 i=i+2 end else local x=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1) local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
   const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then local v=p[c+1]S.setColor(m(v/65536),m(v/256)%256,v%256)q=c end F(z%${width},m(z/${width}),1,1)end end`;
   return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
 }

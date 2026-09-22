@@ -32,7 +32,7 @@ describe('Lua round-trip verification', () => {
 
   it('stores near-greyscale LZ palette entries in two Base64 characters', () => {
     const indices = [Uint16Array.from([0, 1]), Uint16Array.from([1, 0])];
-    const lua = emitAnimationLuaLzFrames(indices, 2, 1, ['20,20,20', '45,46,44']);
+    const lua = emitAnimationLuaLzFrames(indices, 2, 1, ['20,20,20', '45,46,45']);
     const palette = lua.match(/P="([^"]*)"/)?.[1] ?? '';
 
     expect(palette).toHaveLength(4);
