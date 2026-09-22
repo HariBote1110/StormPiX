@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { convert, convertFrames, replayLuaFrames, type Bitmap, type EmitStrategy } from '../src/core/index';
 import { executeLua } from './lua-executor';
+import { emitAnimationLuaLzFrames } from '../src/core/cost';
 
 function frame(width: number, height: number, shift: number): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -16,6 +17,19 @@ function frame(width: number, height: number, shift: number): Bitmap {
 }
 
 describe('Lua round-trip verification', () => {
+  it('executes the LZ frame stream and reproduces every frame', () => {
+    const frames = [frame(8, 8, 0), frame(8, 8, 2), frame(8, 8, 4)];
+    const colours = ['15,25,45', '230,170,40'];
+    const indices = frames.map((bitmap) => Uint16Array.from({ length: bitmap.width * bitmap.height }, (_, pixel) => bitmap.data[pixel * 4] === 230 ? 1 : 0));
+    const lua = emitAnimationLuaLzFrames(indices, 8, 8, colours, 2);
+    const execution = executeLua(lua, { frameCount: frames.length, ticksPerFrame: 2, drawInitialFrame: true });
+    if (execution.skipped) return;
+
+    expect(execution.skipped).toBe(false);
+    const rendered = replayLuaFrames(execution.frames, 8, 8);
+    for (let index = 0; index < frames.length; index += 1) expect(rendered[index]?.data).toEqual(frames[index]?.data);
+  });
+
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
     const source = frame(8, 8, 2);
     const result = convert(source, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
