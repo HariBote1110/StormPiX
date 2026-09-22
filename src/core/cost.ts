@@ -287,14 +287,14 @@ export function emitAnimationLuaLzFrames(
   const data = encodeLzFrameStream(values, compactLiterals).data;
   const palette = encodeLzPalette(colours, sourceIndexes);
   const pixels = width * height;
-  const paletteDecoder = palette.nearGreyscale
-    ? `for i=1,#P,2 do local v=V(P:byte(i))*64+V(P:byte(i+1))local g=m(v/16)p[#p+1]=(g+m(v/4)%4-1)*65536+g*257+v%4-1 end `
-    : `for i=1,#P,4 do p[#p+1]=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))end `;
   const literalDecoder = compactLiterals
     ? `local v=V(d:byte(i))i=i+1 if v<58 then o[#o+1]=v else o[#o+1]=58+(v-58)*64+V(d:byte(i))i=i+1 end `
     : `o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"p={}o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n<58 and n-48 or n end ${paletteDecoder}i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
-  const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then local v=p[c+1]S.setColor(m(v/65536),m(v/256)%256,v%256)q=c end F(z%${width},m(z/${width}),1,1)end end`;
+  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n<58 and n-48 or n end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
+  const colour = palette.nearGreyscale
+    ? `local v=V(P:byte(c*2+1))*64+V(P:byte(c*2+2))local g=m(v/16)S.setColor(g+m(v/4)%4-1,g,g+v%4-1)`
+    : `local i=c*4+1 local v=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))S.setColor(m(v/65536),m(v/256)%256,v%256)`;
+  const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},m(z/${width}),1,1)end end`;
   return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
 }
 

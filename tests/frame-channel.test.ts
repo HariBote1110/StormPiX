@@ -29,14 +29,14 @@ describe('外部フレーム番号', () => {
     expect(undefinedChannel.totalCharCount).toBe(omitted.totalCharCount);
   });
 
-  it('astral_opening を単一のlossless Lua 1万文字未満で再生する', () => {
+  it('astral_opening を単一のlossless Lua 8,192文字以内で再生する', () => {
     const root = '/Users/yuki/doc/astral_opening';
     if (!existsSync(root)) return;
     const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
-    const result = convertFrames(frames, { mode: 'lossless', budget: 10_000, seed: 0 });
+    const result = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
     expect(result.withinBudget).toBe(true);
     expect(result.scripts).toHaveLength(1);
-    expect(result.totalCharCount).toBeLessThan(10_000);
+    expect(result.totalCharCount).toBeLessThanOrEqual(8_192);
     const execution = executeLua(result.lua, { frameCount: frames.length, ticksPerFrame: 6, drawInitialFrame: true, width: 96, height: 32 });
     if (execution.skipped) return;
     expect(execution.frames).toHaveLength(frames.length);
