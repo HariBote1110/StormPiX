@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { convert, convertFrames, ssim, type Bitmap } from '../src/core/index';
+import { emitAnimationLuaColumnDictionary } from '../src/core/cost';
 
 function solid(width: number, height: number, r: number, g: number, b: number): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -61,6 +62,18 @@ function luaAvailable(): boolean {
 }
 
 describe('convertFrames', () => {
+  it('encodes high-colour column dictionaries with three-character runs', () => {
+    const width = 5;
+    const height = 32;
+    const colours = Array.from({ length: 129 }, (_, index) => `${index},${index},${index}`);
+    const indices = new Uint16Array(width * height);
+    for (let x = 0; x < width; x += 1) for (let y = 0; y < height; y += 1) indices[y * width + x] = x === 0 ? 128 : x;
+
+    const lua = emitAnimationLuaColumnDictionary([indices], width, height, colours);
+
+    expect(lua).not.toBe('');
+  });
+
   it('stores variable-length column patterns in one delimiter-separated dictionary string', () => {
     const frames = [
       dictionaryFrame(8, 8, 0),
