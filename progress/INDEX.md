@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `ascii-lz-decoder.md` — Base64索引表をASCII計算へ置換し、astral_openingを122文字削減する決定
 - `near-greyscale-lz-palette.md` — RGB差が1以内のpaletteを12 bitへ可逆化し、astral_openingを890文字削減する決定
 - `lz-frame-stream.md` — 全フレームを共有LZストリームと4文字/RGB paletteで符号化し、astral_openingを単一・lossless 9,966文字へ圧縮する決定
 - `packed-keyframe-direct-diff.md` — packed keyframeと少数の矩形差分を混在させ、astralを1,842文字削減する決定

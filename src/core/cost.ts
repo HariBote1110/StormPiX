@@ -272,9 +272,9 @@ export function emitAnimationLuaLzFrames(
   const palette = encodeLzPalette(colours, sourceIndexes);
   const pixels = width * height;
   const paletteDecoder = palette.nearGreyscale
-    ? `for i=1,#P,2 do local v=(A:find(P:sub(i,i),1,1)-1)*64+A:find(P:sub(i+1,i+1),1,1)-1 local g=m(v/16)p[#p+1]=(g+m(v/4)%4-1)*65536+g*257+v%4-1 end `
-    : `for i=1,#P,4 do p[#p+1]=(A:find(P:sub(i,i),1,1)-1)*262144+(A:find(P:sub(i+1,i+1),1,1)-1)*4096+(A:find(P:sub(i+2,i+2),1,1)-1)*64+A:find(P:sub(i+3,i+3),1,1)-1 end `;
-  const decoder = `S=screen A="${BASE64_ALPHABET}"P="${palette.data}"d="${data}"p={}o={}m=math.floor ${paletteDecoder}i=1 while i<=#d do local z=d:sub(i,i)if z=="!"then local x=(A:find(d:sub(i+1,i+1),1,1)-1)*64+A:find(d:sub(i+2,i+2),1,1)local n=(A:find(d:sub(i+3,i+3),1,1)-1)*64+A:find(d:sub(i+4,i+4),1,1)+2 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=A:find(z,1,1)-1 i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1)-1 i=i+2 end else local x=(A:find(d:sub(i,i),1,1)-1)*64+A:find(d:sub(i+1,i+1),1,1) local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
+    ? `for i=1,#P,2 do local v=V(P:byte(i))*64+V(P:byte(i+1))local g=m(v/16)p[#p+1]=(g+m(v/4)%4-1)*65536+g*257+v%4-1 end `
+    : `for i=1,#P,4 do p[#p+1]=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))end `;
+  const decoder = `S=screen P="${palette.data}"d="${data}"p={}o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n>47 and n-48 or n==43 and 62 or 63 end ${paletteDecoder}i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
   const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then local v=p[c+1]S.setColor(m(v/65536),m(v/256)%256,v%256)q=c end F(z%${width},m(z/${width}),1,1)end end`;
   return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
 }
