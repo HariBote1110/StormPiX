@@ -103,16 +103,24 @@ function encodeDeltaPixels(pixels: readonly number[], width: number, height: num
   return result;
 }
 
-function deltaPackedDecoder(width: number, height: number, colourCount: number, data: string, palette: string): string {
+function deltaPackedDecoder(width: number, height: number, colourCount: number, data: string, palette: string, paletteMode: 'colour' | 'greyscale' | 'mixed'): string {
   const firstWidth = Math.max(1, Math.ceil(Math.log2(colourCount)));
-  return `function onDraw()local a="${BASE64_ALPHABET}"local d="${data}"local p={${palette}}local k=1 local j=5 local q=0 local function b()if j==5 then q=string.find(a,string.sub(d,k,k),1,true)-1 end local v=math.floor(q/2^j)%2 j=j-1 if j<0 then j=5 k=k+1 end return v end local function r(n)local v=0 for i=1,n do v=v*2+b()end return v end local function g()local z=0 while b()==0 do z=z+1 end local v=0 for i=0,z do v=v*2+b()end return v-1 end local c=0 local f=0 for y=0,${height - 1} do if y==0 then c=r(${firstWidth})else local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(f+q)%${colourCount} end f=c for x=0,${width - 1} do if x>0 then local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(c+q)%${colourCount} end local e=p[c+1]screen.setColor(e[1],e[2],e[3])screen.drawRectF(x,y,1,1)end end end`;
+  const setColour = paletteMode === 'greyscale'
+    ? 'screen.setColor(e,e,e)'
+    : paletteMode === 'mixed'
+      ? 'if type(e)=="number"then screen.setColor(e,e,e)else screen.setColor(e[1],e[2],e[3])end'
+      : 'screen.setColor(e[1],e[2],e[3])';
+  return `function onDraw()local a="${BASE64_ALPHABET}"local d="${data}"local p={${palette}}local k=1 local j=5 local q=0 local function b()if j==5 then q=string.find(a,string.sub(d,k,k),1,true)-1 end local v=math.floor(q/2^j)%2 j=j-1 if j<0 then j=5 k=k+1 end return v end local function r(n)local v=0 for i=1,n do v=v*2+b()end return v end local function g()local z=0 while b()==0 do z=z+1 end local v=0 for i=0,z do v=v*2+b()end return v-1 end local c=0 local f=0 for y=0,${height - 1} do if y==0 then c=r(${firstWidth})else local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(f+q)%${colourCount} end f=c for x=0,${width - 1} do if x>0 then local v=g()local q=math.floor((v+1)/2)if v%2==0 then q=-q end c=(c+q)%${colourCount} end local e=p[c+1]${setColour}screen.drawRectF(x,y,1,1)end end end`;
 }
 
 function emitDeltaPacked(width: number, height: number, colours: readonly string[], pixels: readonly number[]): string {
   if (colours.length < 2 || colours.length > 256) return '';
-  const palette = colours.map((colour) => colour.split(',').map((value) => Number(value))).map((colour) => `{${colour.join(',')}}`).join(',');
+  const values = colours.map((colour) => colour.split(',').map((value) => Number(value)));
+  const greyscale = values.map((colour) => colour[0] === colour[1] && colour[1] === colour[2]);
+  const paletteMode = greyscale.every(Boolean) ? 'greyscale' : greyscale.some(Boolean) ? 'mixed' : 'colour';
+  const palette = values.map((colour, index) => greyscale[index] ? String(colour[0]) : `{${colour.join(',')}}`).join(',');
   const data = encodeDeltaPixels(pixels, width, height, colours.length);
-  return deltaPackedDecoder(width, height, colours.length, data, palette);
+  return deltaPackedDecoder(width, height, colours.length, data, palette, paletteMode);
 }
 
 function emitTable(ops: readonly DrawOp[]): string {
