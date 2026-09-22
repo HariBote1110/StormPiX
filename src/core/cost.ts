@@ -59,6 +59,7 @@ function isRectProgram(ops: readonly DrawOp[]): boolean {
 }
 
 const BASE64_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/';
+const LZ_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz>?';
 
 function gammaBits(value: number): number[] {
   const binary = (value + 1).toString(2);
@@ -177,7 +178,7 @@ export function emitAnimationLuaSharedPacked(
   return `S=screen A="${BASE64_ALPHABET}"p={${palette}}F=S.drawRectF ${decoder}${compactAnimationTick(ticksPerFrame, frameCount)}${playback}`;
 }
 
-function encodeLzFrameStream(values: readonly number[]): string {
+function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number> } {
   const references = new Map<string, number[]>();
   const keyAt = (index: number): string => index + 2 < values.length ? `${values[index]},${values[index + 1]},${values[index + 2]}` : '';
   const addReference = (index: number): void => {
@@ -188,7 +189,14 @@ function encodeLzFrameStream(values: readonly number[]): string {
     if (indexes.length > 4096) indexes.shift();
     references.set(key, indexes);
   };
-  const pair = (value: number): string => `${BASE64_ALPHABET[Math.floor(value / 64)] ?? ''}${BASE64_ALPHABET[value % 64] ?? ''}`;
+  const pair = (value: number): string => `${LZ_ALPHABET[Math.floor(value / 64)] ?? ''}${LZ_ALPHABET[value % 64] ?? ''}`;
+  const literalFrequencies = new Map<number, number>();
+  const literal = (value: number): string => {
+    literalFrequencies.set(value, (literalFrequencies.get(value) ?? 0) + 1);
+    if (!compactLiterals || value < 58) return LZ_ALPHABET[value] ?? '';
+    const offset = value - 58;
+    return `${LZ_ALPHABET[58 + Math.floor(offset / 64)] ?? ''}${LZ_ALPHABET[offset % 64] ?? ''}`;
+  };
   let result = '';
   let index = 0;
   while (index < values.length) {
@@ -208,7 +216,7 @@ function encodeLzFrameStream(values: readonly number[]): string {
       }
     }
     if (length >= 3) {
-      result += length <= 34 ? `${BASE64_ALPHABET[length + 29] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      result += length <= 34 ? `${LZ_ALPHABET[length + 29] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
       for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
       index += length;
       continue;
@@ -228,10 +236,10 @@ function encodeLzFrameStream(values: readonly number[]): string {
         if (candidateLength > length) length = candidateLength;
       }
     } while (length < 3);
-    result += BASE64_ALPHABET[index - start - 1] ?? '';
-    for (let offset = start; offset < index; offset += 1) result += pair(values[offset] as number);
+    result += LZ_ALPHABET[index - start - 1] ?? '';
+    for (let offset = start; offset < index; offset += 1) result += literal(values[offset] as number);
   }
-  return result;
+  return { data: result, literalFrequencies };
 }
 
 function encodeLzPalette(colours: readonly string[], indexes: readonly number[]): { readonly data: string; readonly nearGreyscale: boolean } {
@@ -242,15 +250,15 @@ function encodeLzPalette(colours: readonly string[], indexes: readonly number[])
     if (nearGreyscale) {
       const base = channels[1] ?? 0;
       const value = base * 16 + ((channels[0] ?? 0) - base + 1) * 4 + ((channels[2] ?? 0) - base + 1);
-      result += BASE64_ALPHABET[Math.floor(value / 64)] ?? '';
-      result += BASE64_ALPHABET[value % 64] ?? '';
+      result += LZ_ALPHABET[Math.floor(value / 64)] ?? '';
+      result += LZ_ALPHABET[value % 64] ?? '';
       continue;
     }
     const value = ((channels[0] ?? 0) * 65_536) + ((channels[1] ?? 0) * 256) + (channels[2] ?? 0);
-    result += BASE64_ALPHABET[Math.floor(value / 262_144)] ?? '';
-    result += BASE64_ALPHABET[Math.floor(value / 4096) % 64] ?? '';
-    result += BASE64_ALPHABET[Math.floor(value / 64) % 64] ?? '';
-    result += BASE64_ALPHABET[value % 64] ?? '';
+    result += LZ_ALPHABET[Math.floor(value / 262_144)] ?? '';
+    result += LZ_ALPHABET[Math.floor(value / 4096) % 64] ?? '';
+    result += LZ_ALPHABET[Math.floor(value / 64) % 64] ?? '';
+    result += LZ_ALPHABET[value % 64] ?? '';
   }
   return { data: result, nearGreyscale };
 }
@@ -264,17 +272,28 @@ export function emitAnimationLuaLzFrames(
   ticksPerFrame = 6,
 ): string {
   if (frameIndices.length === 0 || width <= 0 || height <= 0) return '';
-  const sourceIndexes = [...new Set(frameIndices.flatMap((indices) => Array.from(indices)))];
-  if (sourceIndexes.length === 0 || sourceIndexes.length > 512) return '';
+  const sourceOrder = [...new Set(frameIndices.flatMap((indices) => Array.from(indices)))];
+  if (sourceOrder.length === 0 || sourceOrder.length > 512) return '';
+  const sourceMap = new Map(sourceOrder.map((index, compact) => [index, compact] as const));
+  const preliminaryValues = frameIndices.flatMap((indices) => Array.from(indices, (index) => sourceMap.get(index) ?? 0));
+  const preliminary = encodeLzFrameStream(preliminaryValues, false);
+  const sourceIndexes = [...sourceOrder].sort((left, right) => {
+    const frequencyDifference = (preliminary.literalFrequencies.get(sourceMap.get(right) ?? 0) ?? 0) - (preliminary.literalFrequencies.get(sourceMap.get(left) ?? 0) ?? 0);
+    return frequencyDifference !== 0 ? frequencyDifference : (sourceMap.get(left) ?? 0) - (sourceMap.get(right) ?? 0);
+  });
   const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
   const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
-  const data = encodeLzFrameStream(values);
+  const compactLiterals = sourceIndexes.length <= 442;
+  const data = encodeLzFrameStream(values, compactLiterals).data;
   const palette = encodeLzPalette(colours, sourceIndexes);
   const pixels = width * height;
   const paletteDecoder = palette.nearGreyscale
     ? `for i=1,#P,2 do local v=V(P:byte(i))*64+V(P:byte(i+1))local g=m(v/16)p[#p+1]=(g+m(v/4)%4-1)*65536+g*257+v%4-1 end `
     : `for i=1,#P,4 do p[#p+1]=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))end `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"p={}o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n>47 and n-48 or n==43 and 62 or 63 end ${paletteDecoder}i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 local b=#o-x for j=1,n do o[#o+1]=o[b+j]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 local b=#o-x for j=1,n-29 do o[#o+1]=o[b+j]end i=i+2 end end end F=S.drawRectF `;
+  const literalDecoder = compactLiterals
+    ? `local v=V(d:byte(i))i=i+1 if v<58 then o[#o+1]=v else o[#o+1]=58+(v-58)*64+V(d:byte(i))i=i+1 end `
+    : `o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 `;
+  const decoder = `S=screen P="${palette.data}"d="${data}"p={}o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n<58 and n-48 or n end ${paletteDecoder}i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<32 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-29 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
   const draw = `function onDraw()local q=-1 for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then local v=p[c+1]S.setColor(m(v/65536),m(v/256)%256,v%256)q=c end F(z%${width},m(z/${width}),1,1)end end`;
   return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
 }
