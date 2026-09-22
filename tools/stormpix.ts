@@ -1,11 +1,12 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { readPng } from '../bench/compare/png.ts';
-import { createAssetReport, verifyAssetReport, type AssetReportOptions, type VerificationPolicy } from './asset-report.ts';
+import { convertAsset, verifyAssetReport, type AssetReportOptions, type VerificationPolicy } from './asset-report.ts';
+import { verifyLuaRoundTrip } from './lua-roundtrip.ts';
 
 interface Arguments {
   readonly command: 'report' | 'verify';
   readonly path: string;
-  readonly options: AssetReportOptions & VerificationPolicy;
+  readonly options: AssetReportOptions & VerificationPolicy & { readonly requireLuaRoundTrip?: boolean };
 }
 
 function usage(): string {
@@ -17,6 +18,7 @@ function usage(): string {
     '  --max-total-chars <合計文字数上限>',
     '  --require-exact',
     '  --require-within-budget',
+    '  --require-lua-roundtrip',
   ].join('\n');
 }
 
@@ -29,7 +31,7 @@ function positiveInteger(value: string, option: string): number {
 function parseArguments(argv: readonly string[]): Arguments {
   const [command, path, ...rest] = argv;
   if ((command !== 'report' && command !== 'verify') || !path) throw new Error(usage());
-  const options: AssetReportOptions & VerificationPolicy = { source: path };
+  const options: AssetReportOptions & VerificationPolicy & { requireLuaRoundTrip?: boolean } = { source: path };
   for (let index = 0; index < rest.length; index += 1) {
     const option = rest[index];
     if (option === '--require-exact') {
@@ -38,6 +40,10 @@ function parseArguments(argv: readonly string[]): Arguments {
     }
     if (option === '--require-within-budget') {
       options.requireWithinBudget = true;
+      continue;
+    }
+    if (option === '--require-lua-roundtrip') {
+      options.requireLuaRoundTrip = true;
       continue;
     }
     const value = rest[index + 1];
@@ -63,12 +69,14 @@ function loadFrames(path: string) {
 
 function main(argv: readonly string[]): void {
   const arguments_ = parseArguments(argv);
-  const report = createAssetReport(loadFrames(arguments_.path), arguments_.options);
+  const frames = loadFrames(arguments_.path);
+  const { report, result } = convertAsset(frames, arguments_.options);
+  const luaRoundTrip = arguments_.command === 'verify' ? verifyLuaRoundTrip(frames, result, arguments_.options.ticksPerFrame ?? 6) : undefined;
   const output = arguments_.command === 'verify'
-    ? { ...report, verification: verifyAssetReport(report, arguments_.options) }
+    ? { ...report, verification: verifyAssetReport(report, arguments_.options), luaRoundTrip }
     : report;
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
-  if (arguments_.command === 'verify' && !output.verification.passed) process.exitCode = 1;
+  if (arguments_.command === 'verify' && (!output.verification.passed || output.luaRoundTrip?.status === 'failed' || (arguments_.options.requireLuaRoundTrip === true && output.luaRoundTrip?.status !== 'passed'))) process.exitCode = 1;
 }
 
 try {

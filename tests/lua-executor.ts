@@ -88,7 +88,11 @@ end
 }
 
 export class ShellLuaExecutor implements LuaExecutor {
-  public constructor(private readonly command = 'lua') {}
+  private readonly command: string;
+
+  public constructor(command = 'lua') {
+    this.command = command;
+  }
 
   public execute(source: string, options: { readonly frameCount?: number; readonly ticksPerFrame?: number; readonly drawInitialFrame?: boolean; readonly width?: number; readonly height?: number; readonly inputNumbers?: readonly number[] } = {}): LuaExecution {
     const frameCount = Math.max(1, Math.floor(options.frameCount ?? 1));

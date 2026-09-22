@@ -65,7 +65,7 @@ function ensureFrames(frames: readonly Bitmap[]): { readonly width: number; read
   return { width: first.width, height: first.height };
 }
 
-export function createAssetReport(frames: readonly Bitmap[], options: AssetReportOptions): AssetReport {
+export function convertAsset(frames: readonly Bitmap[], options: AssetReportOptions): { readonly report: AssetReport; readonly result: ConvertResult } {
   const { width, height } = ensureFrames(frames);
   const budget = options.budget ?? 8192;
   const mode = options.mode ?? 'lossless';
@@ -78,7 +78,7 @@ export function createAssetReport(frames: readonly Bitmap[], options: AssetRepor
   });
   const ranges = result.stats.scriptFrameRanges ?? result.scripts.map(() => [0, frames.length] as const);
 
-  return {
+  const report: AssetReport = {
     schemaVersion: 1,
     source: {
       path: options.source,
@@ -113,6 +113,11 @@ export function createAssetReport(frames: readonly Bitmap[], options: AssetRepor
       }),
     },
   };
+  return { report, result };
+}
+
+export function createAssetReport(frames: readonly Bitmap[], options: AssetReportOptions): AssetReport {
+  return convertAsset(frames, options).report;
 }
 
 export interface VerificationPolicy {
