@@ -36,6 +36,7 @@ describe('Lua round-trip verification', () => {
     const palette = lua.match(/P="([^"]*)"/)?.[1] ?? '';
 
     expect(palette).toHaveLength(4);
+    expect(lua).not.toContain('A="');
   });
 
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
