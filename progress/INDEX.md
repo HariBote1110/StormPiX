@@ -1,5 +1,7 @@
 # 進捗記録
 
+- `fit-splitting-frame-channel.md` — fitの複数スクリプトを外部フレーム番号必須にし、品質不足を統計で通知する決定
+- `fit-quality-first-selection.md` — fitアニメーションを SSIM、スクリプト数、総文字数の順で選び、固定1件のexact分割候補を評価する決定
 - `external-frame-channel.md` — 外部コンポジット番号によるグローバルフレーム選択、自己完結符号化と入力境界の決定
 - `triangle-primitives-rejected.md` — 計測により棄却。勝っている符号化が描画プリミティブを表現していないため。
 - `fit-animation-encoding-selection.md` — fitアニメーションで通常符号化と列辞書／分割符号化をスクリプト数、SSIM、文字数の順で比較する決定

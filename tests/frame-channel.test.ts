@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync, readdirSync } from 'node:fs';
 import { convertFrames, render, type Bitmap } from '../src/core/index';
+import { readPng } from '../bench/compare/png';
 import { executeLua } from './lua-executor';
 
 function frame(shift: number): Bitmap {
@@ -25,6 +27,17 @@ describe('外部フレーム番号', () => {
 
     expect(undefinedChannel.scripts).toEqual(omitted.scripts);
     expect(undefinedChannel.totalCharCount).toBe(omitted.totalCharCount);
+  });
+
+  it('未指定時の分割 lossless 出力は astral_opening の既知文字数を維持する', () => {
+    const root = '/Users/yuki/doc/astral_opening';
+    if (!existsSync(root)) return;
+    const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
+    const result = convertFrames(frames, { mode: 'lossless', budget: 8192, seed: 0 });
+    const output = result.scripts.join('');
+
+    expect(result.scripts).toHaveLength(30);
+    expect(output).toHaveLength(97294);
   });
 
   it('Lua で順不同のグローバル添字を完全フレームとして描画し、範囲外と小数は何も描かない', () => {

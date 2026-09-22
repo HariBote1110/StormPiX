@@ -423,9 +423,9 @@ function animationCandidateBetter(candidate: AnimationCandidate, best: Animation
 
 function animationSelectionBetter(candidate: AnimationSelection, best: AnimationSelection | undefined): boolean {
   if (!best) return true;
-  if (candidate.scripts.length !== best.scripts.length) return candidate.scripts.length < best.scripts.length;
   const qualityDifference = candidate.candidate.metrics.ssim - best.candidate.metrics.ssim;
   if (Math.abs(qualityDifference) > 1e-12) return qualityDifference > 0;
+  if (candidate.scripts.length !== best.scripts.length) return candidate.scripts.length < best.scripts.length;
   const candidateChars = candidate.scripts.reduce((sum, script) => sum + script.length, 0);
   const bestChars = best.scripts.reduce((sum, script) => sum + script.length, 0);
   return candidateChars < bestChars;
@@ -476,10 +476,11 @@ function losslessAnimationSegment(
 ): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } {
   const fullOpsForSegment = fullOps.slice(start, end);
   const diffOpsForSegment = [fullOps[start] as readonly DrawOp[], ...diffOps.slice(start + 1, end)];
+  const frameOffset = frameChannel === undefined ? 0 : start;
   const fullCandidates = [
-    emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame, frameChannel, start),
-    emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, start),
-    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, start),
+    emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame, frameChannel, frameOffset),
+    emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, frameOffset),
+    emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, frameOffset),
   ];
   if (frameChannel !== undefined) {
     return { lua: fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string, encoding: 'full' };
@@ -533,7 +534,7 @@ function splitLosslessAnimation(
     }
   }
   if (previous[frameCount] === -1) {
-    const scripts = fullOps.map((ops, index) => emitAnimationLuaCompact([ops], ticksPerFrame, frameChannel, index));
+    const scripts = fullOps.map((ops, index) => emitAnimationLuaCompact([ops], ticksPerFrame, frameChannel, frameChannel === undefined ? 0 : index));
     return { scripts, ranges: fullOps.map((_, index) => [index, index + 1] as const), encoding: 'full' };
   }
   const scripts: string[] = [];
@@ -733,7 +734,6 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       },
     };
   }
-  if (options.frameChannel !== undefined) return convertFramesLossless(frames, options, started);
   if ((options.mode ?? 'lossless') === 'lossless') return convertFramesLossless(frames, options, started);
 
   const budget = options.budget ?? DEFAULT_BUDGET;
@@ -748,6 +748,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   const searchColours = budgetColourCap(budget, maxColours, options.maxColours !== undefined);
   const ticksPerFrame = Number.isFinite(options.ticksPerFrame) ? Math.max(1, Math.floor(options.ticksPerFrame as number)) : 6;
   let best: AnimationSelection | undefined;
+  let bestSplit: AnimationSelection | undefined;
   let shortest: AnimationCandidate | undefined;
   const dictionaryCandidates: { readonly prepared: PreparedAnimation; readonly palette: readonly Rgb[]; readonly evaluated: ReturnType<typeof evaluateAnimation>; readonly order: number }[] = [];
   let lastPalette: readonly Rgb[] = [[0, 0, 0]];
@@ -774,15 +775,19 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
         budget,
         ticksPerFrame,
         palette.map((colour) => colour.join(',')),
+        options.frameChannel,
       );
       if (split.scripts.every((script) => script.length <= budget)) {
         const candidate = evaluated.best ?? evaluated.shortest;
         const selection: AnimationSelection = { candidate, scripts: split.scripts, ranges: split.ranges, encoding: split.encoding };
-        if (animationSelectionBetter(selection, best)) best = selection;
+        if (split.scripts.length > 1) {
+          if (animationSelectionBetter(selection, bestSplit)) bestSplit = selection;
+          if (options.frameChannel !== undefined && animationSelectionBetter(selection, best)) best = selection;
+        } else if (animationSelectionBetter(selection, best)) best = selection;
       }
   };
 
-  if (options.maxColours === undefined && frames.reduce((area, frame) => area + frame.width * frame.height, 0) <= 2048 && work.take()) {
+  if (options.maxColours === undefined && work.take()) {
     const exact = exactLabelsFrames(frames);
     consider(exact.palette, exact.indices);
   }
@@ -813,17 +818,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
   }
   const fallbackCandidate = shortest;
   if (!best && fallbackCandidate) {
-    const fallback = splitLosslessAnimation(
-      fallbackCandidate.fullOps,
-      fallbackCandidate.diffOps,
-      fallbackCandidate.frameIndices,
-      width,
-      height,
-      budget,
-      ticksPerFrame,
-      fallbackCandidate.palette.map((colour) => colour.join(',')),
-    );
-    best = { candidate: fallbackCandidate, scripts: fallback.scripts, ranges: fallback.ranges, encoding: fallback.encoding };
+    best = { candidate: fallbackCandidate, scripts: [fallbackCandidate.lua], encoding: fallbackCandidate.encoding };
   }
   const selected = best as AnimationSelection;
   const scripts = selected.scripts;
@@ -852,6 +847,7 @@ export function convertFrames(frames: readonly Bitmap[], options: ConvertOptions
       encoding: selected.encoding,
       fullFrameChars: emitAnimationLua(selected.candidate.fullOps, selected.candidate.strategy, ticksPerFrame, false).length,
       scriptFrameRanges: selected.ranges,
+      splittingRequiresFrameChannel: options.frameChannel === undefined && bestSplit !== undefined && bestSplit.candidate.metrics.ssim > selected.candidate.metrics.ssim + 1e-12 ? true : undefined,
       timeBudgetTruncated: work.timeBudgetTruncated(),
     },
   };

@@ -51,6 +51,14 @@ export interface ConvertStats {
   readonly setColourCalls: number;
   readonly rects: number;
   readonly elapsedMs: number;
+  /**
+   * frameChannel を指定すれば分割してより高い品質に到達できた場合に true。
+   *
+   * 複数スクリプトの結果は frameChannel を指定したときだけ返す。外部から
+   * フレーム番号が来ない限り、別々のマイコンに書き込まれたスクリプトは
+   * 同時に起動せず同期できないためである。
+   */
+  readonly splittingRequiresFrameChannel?: boolean;
 }
 
 export interface ConvertResult {

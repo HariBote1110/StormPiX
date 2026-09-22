@@ -29,6 +29,64 @@ function parseFrame(line: string): DrawOp[] {
   return ops;
 }
 
+export interface LuaScriptsExecution {
+  readonly frames: readonly DrawOp[][];
+  readonly scriptIndexes: readonly number[];
+  readonly skipped: boolean;
+  readonly message?: string;
+}
+
+/** Execute independent Lua scripts against one shared sequence of ticks. */
+export function executeLuaScripts(sources: readonly string[], options: { readonly frameCount: number; readonly inputChannel?: number; readonly frameNumbers?: readonly number[] }): LuaScriptsExecution {
+  const encodedSources = sources.map((source) => `[=[${source}]=]`).join(',');
+  const inputChannel = options.inputChannel;
+  const frameNumbers = options.frameNumbers ?? Array.from({ length: options.frameCount }, (_, frame) => frame);
+  const inputValues = frameNumbers.map((frame) => inputChannel === undefined ? '{}' : `{[${inputChannel}]=${frame}}`).join(',');
+  const harness = `
+local scripts={${encodedSources}}
+local active=0
+local current={}
+local function capture(name,...)
+  local fields={name}
+  local args={...}
+  for i=1,#args do fields[#fields+1]=(tostring(args[i]):gsub("\\n", "\\\\n")) end
+  current[#current+1]=table.concat(fields,"\\x1f")
+end
+local sharedScreen=setmetatable({getWidth=function()return 96 end,getHeight=function()return 96 end}, {__index=function(_,name)return function(...)capture(name,...)end end})
+local environments={}
+for i,source in ipairs(scripts) do
+  local environment=setmetatable({screen=sharedScreen,input={getBool=function()return false end,getNumber=function(channel)return ({${inputValues}})[active][channel] or 0 end}}, {__index=_G})
+  local chunk,errorMessage=load(source,"script","t",environment)
+  assert(chunk,errorMessage)
+  chunk()
+  environments[i]=environment
+end
+for frame=1,${frameNumbers.length} do
+  active=frame
+  for _,environment in ipairs(environments) do if environment.onTick then environment.onTick() end end
+  for index,environment in ipairs(environments) do
+    current={}
+    if environment.onDraw then environment.onDraw() end
+    if #current>0 then io.write(index,"\\x1d",table.concat(current,"\\x1e"),"\\n") end
+  end
+end
+`;
+  const path = `/private/tmp/stormpix-lua-scripts-${Date.now()}-${Math.floor(Math.random() * 1000000)}.lua`;
+  writeFileSync(path, harness, 'utf8');
+  try {
+    const result = spawnSync('lua', [path], { input: '', encoding: 'utf8' });
+    if (result.error?.code === 'ENOENT') return { frames: [], scriptIndexes: [], skipped: true, message: 'SKIP: lua executable is absent; Lua round-trip verification was skipped' };
+    if (result.status !== 0) throw new Error(`Lua execution failed: ${result.stderr}`);
+    const records = (result.stdout ?? '').split(/\r?\n/).filter((line) => line.length > 0).map((line) => {
+      const separator = line.indexOf('\u001d');
+      return { scriptIndex: Number(line.slice(0, separator)) - 1, ops: parseFrame(line.slice(separator + 1)) };
+    });
+    return { frames: records.map((record) => record.ops), scriptIndexes: records.map((record) => record.scriptIndex), skipped: false };
+  } finally {
+    rmSync(path, { force: true });
+  }
+}
+
 export class ShellLuaExecutor implements LuaExecutor {
   public constructor(private readonly command = 'lua') {}
 

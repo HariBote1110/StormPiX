@@ -43,6 +43,8 @@ export interface ConvertStats {
   readonly frameOps?: readonly number[];
   readonly encoding?: 'full' | 'keyframe-diff';
   readonly fullFrameChars?: number;
+  /** frameChannel を指定すれば分割してより高い品質に到達できた場合に true。 */
+  readonly splittingRequiresFrameChannel?: boolean;
   /** True when the counted work budget was exhausted. */
   readonly timeBudgetTruncated?: boolean;
   readonly scriptFrameRanges?: readonly (readonly [number, number])[];
