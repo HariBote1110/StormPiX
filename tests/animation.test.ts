@@ -14,12 +14,41 @@ function solid(width: number, height: number, r: number, g: number, b: number): 
   return { width, height, data };
 }
 
+function dictionaryFrame(width: number, height: number, shift: number): Bitmap {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const light = (x + shift + y) % 3 === 0;
+    data[offset] = light ? 220 : 20;
+    data[offset + 1] = light ? 120 : 30;
+    data[offset + 2] = light ? 40 : 50;
+    data[offset + 3] = 255;
+  }
+  return { width, height, data };
+}
+
 function luaAvailable(): boolean {
   const result = spawnSync('lua', ['-e', ''], { input: '', encoding: 'utf8' });
   return result.error?.code !== 'ENOENT';
 }
 
 describe('convertFrames', () => {
+  it('stores variable-length column patterns in one delimiter-separated dictionary string', () => {
+    const frames = [
+      dictionaryFrame(8, 8, 0),
+      dictionaryFrame(8, 8, 2),
+      dictionaryFrame(8, 8, 4),
+      dictionaryFrame(8, 8, 1),
+    ];
+    const result = convertFrames(frames, { mode: 'lossless', budget: 8192, ticksPerFrame: 2 });
+
+    expect(result.lua).toContain('q="');
+    expect(result.lua).not.toContain('q={');
+    expect(result.lua).toContain('local Q={}for z in string.gmatch(q,"[^!]+")do Q[#Q+1]=z end');
+    expect(result.lua).toContain('local s=Q[n+1]');
+    expect(result.lua).not.toContain('local s for z in string.gmatch');
+  });
+
   it('is byte deterministic and reports exact character and budget invariants', () => {
     const frames = [solid(8, 8, 20, 30, 40), solid(8, 8, 40, 50, 60)];
     const first = convertFrames(frames, { mode: 'fit', seed: 17, budget: 8192, ticksPerFrame: 3 });

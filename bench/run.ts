@@ -23,12 +23,12 @@ const DENSE_BUDGET_SWEEP = [...Array.from({ length: Math.floor((8100 - 500) / 10
 
 function dictionaryCharacterBreakdown(lua: string): Readonly<Record<string, number>> | undefined {
   const alphabet = [...lua.matchAll(/[AHM]="[^"]*"/g)].reduce((total, match) => total + (match[0]?.length ?? 0), 0);
-  const palette = lua.match(/p=\{.*?\} q=\{/);
-  const dictionary = lua.match(/q=\{.*?\}F=S\.drawRectF/);
+  const palette = lua.match(/p=\{.*?\} q="/);
+  const dictionary = lua.match(/q="([^"]*)"F=S\.drawRectF/);
   const runPool = lua.match(/B="([^"]*)"/);
   const firstReference = lua.indexOf('function onDraw()');
   if (!palette || !dictionary || !runPool || firstReference < 0) return undefined;
-  const patterns = [...(dictionary[0]?.matchAll(/"([^"]*)"/g) ?? [])].map((match) => match[1] ?? '');
+  const patterns = (dictionary[1] ?? '').split('!');
   const alphabetText = lua.match(/A="([^"]*)"/)?.[1] ?? '';
   const highAlphabet = lua.match(/H="([^"]*)"/)?.[1] ?? '';
   const references = [...lua.slice(firstReference).matchAll(/D\("([^"]*)"\)/g)];
