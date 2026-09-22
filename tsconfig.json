@@ -13,5 +13,5 @@
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "bench", "tests", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "bench", "tests", "tools", "vite.config.ts", "vitest.config.ts"]
 }

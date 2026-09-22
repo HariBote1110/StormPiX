@@ -20,5 +20,7 @@ declare module 'node:zlib' {
 declare const process: {
   readonly argv: string[];
   readonly env: Record<string, string | undefined>;
+  readonly stdout: { write(value: string): void };
+  readonly stderr: { write(value: string): void };
   exitCode?: number;
 };
