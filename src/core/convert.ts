@@ -481,6 +481,7 @@ function losslessAnimationSegment(
     emitAnimationLuaCompact(fullOpsForSegment, ticksPerFrame, frameChannel, frameOffset),
     emitAnimationLuaCompactRectangles(fullOpsForSegment, colours, ticksPerFrame, frameChannel, frameOffset),
     emitAnimationLuaColumnDictionary(frameIndices.slice(start, end), width, height, colours, ticksPerFrame, frameChannel, frameOffset),
+    ...(frameChannel === undefined && end - start === 1 ? [emitAnimationLua(fullOpsForSegment, 'packed', ticksPerFrame)] : []),
   ];
   if (frameChannel !== undefined) {
     return { lua: fullCandidates.filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] as string, encoding: 'full' };

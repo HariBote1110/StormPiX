@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `high-colour-lossless-packed.md` — 高色数アニメーションの単一フレームpacked候補によりastral_openingを59%削減する決定
 - `column-dictionary-string-methods.md` — 列辞書デコーダをLua文字列メソッドへ短縮し、実資産を112文字削減する決定
 - `column-dictionary-table-dispatch.md` — 列辞書アニメーションの分岐をフレーム配列参照にし、実資産を778文字削減する決定
 - `asset-report-cli.md` — 実PNG資産の複雑度、変換文字数、予算・品質不変条件をJSON/CLIで回帰監視する決定
