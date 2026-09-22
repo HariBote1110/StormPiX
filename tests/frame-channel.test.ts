@@ -36,7 +36,7 @@ describe('外部フレーム番号', () => {
     const result = convertFrames(frames, { mode: 'lossless', budget: 8192, seed: 0 });
     expect(result.withinBudget).toBe(true);
     expect(result.scripts.every((script) => script.length <= 8192)).toBe(true);
-    expect(result.totalCharCount).toBeLessThan(34_000);
+    expect(result.totalCharCount).toBeLessThan(28_000);
   });
 
   it('Lua で順不同のグローバル添字を完全フレームとして描画し、範囲外と小数は何も描かない', () => {
