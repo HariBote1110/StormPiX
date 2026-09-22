@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `triangle-primitives-rejected.md` — 計測により棄却。勝っている符号化が描画プリミティブを表現していないため。
 - `fit-animation-encoding-selection.md` — fitアニメーションで通常符号化と列辞書／分割符号化をスクリプト数、SSIM、文字数の順で比較する決定
 - `fit-animation-last-resort-splitting.md` — fitアニメーションの単一スクリプト探索を維持し、不可能な場合だけ選択済み描画操作を分割する決定
 - `column-dictionary-boundaries.md` — 可変長列辞書の区切り除去で実資産40フレームを5,536文字へ短縮し、single-use inline化を不採用とした計測
