@@ -1,5 +1,5 @@
 import { cover, type LabelImage } from './cover.ts';
-import { emitAnimationLua, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitAnimationLuaLzFrames, emitAnimationLuaPackedKeyframe, emitAnimationLuaSharedPacked, emitLua } from './cost.ts';
+import { emitAnimationLua, emitAnimationLuaArithmeticFrames, emitAnimationLuaColumnDictionary, emitAnimationLuaCompact, emitAnimationLuaCompactRectangles, emitAnimationLuaLzFrames, emitAnimationLuaPackedKeyframe, emitAnimationLuaSharedPacked, emitLua } from './cost.ts';
 import { psnr, rmse, ssim } from './metrics.ts';
 import { orderOps } from './order.ts';
 import { blockify, quantiseForQuality } from './quantise.ts';
@@ -516,7 +516,9 @@ function splitLosslessAnimation(
   const frameCount = fullOps.length;
   if (enableLz && frameChannel === undefined && frameCount >= 30) {
     const lz = emitAnimationLuaLzFrames(frameIndices, width, height, colours, ticksPerFrame);
-    if (lz.length <= budget) return { scripts: [lz], ranges: [[0, frameCount]], encoding: 'full' };
+    const arithmetic = emitAnimationLuaArithmeticFrames(frameIndices, width, height, colours, ticksPerFrame);
+    const shortest = [lz, arithmetic].filter((script) => script.length > 0).sort((left, right) => left.length - right.length)[0] ?? '';
+    if (shortest.length <= budget) return { scripts: [shortest], ranges: [[0, frameCount]], encoding: 'full' };
   }
   const cache = new Map<string, { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' }>();
   const segment = (start: number, end: number): { readonly lua: string; readonly encoding: 'full' | 'keyframe-diff' } => {

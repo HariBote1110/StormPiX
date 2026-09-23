@@ -417,6 +417,118 @@ function encodeLzPalette(colours: readonly string[], indexes: readonly number[],
   return { data: result, nearGreyscale, binaryGreyscale };
 }
 
+/** Encode palette indexes with spatial and temporal binary contexts. */
+export function emitAnimationLuaArithmeticFrames(
+  frameIndices: readonly Uint16Array[],
+  width: number,
+  height: number,
+  colours: readonly string[],
+  ticksPerFrame = 6,
+): string {
+  if (frameIndices.length === 0 || width <= 0 || height <= 0) return '';
+  const sourceIndexes = [...new Set(frameIndices.flatMap((indices) => Array.from(indices)))];
+  if (sourceIndexes.length === 0 || sourceIndexes.length > 512) return '';
+  const channels = sourceIndexes.map((index) => (colours[index] ?? '0,0,0').split(',').map(Number));
+  const binaryGreyscale = channels.every(([red = 0, green = 0, blue = 0]) => red >= green - 1 && red <= green && blue >= green - 1 && blue <= green);
+  const nearGreyscale = channels.every(([red = 0, green = 0, blue = 0]) => Math.abs(red - green) <= 1 && Math.abs(blue - green) <= 1);
+  const ordered = sourceIndexes.map((index, position) => {
+    const [red = 0, green = 0, blue = 0] = channels[position] ?? [];
+    const code = binaryGreyscale ? green * 4 + (red - green + 1) * 2 + blue - green + 1
+      : nearGreyscale ? green * 16 + (red - green + 1) * 4 + blue - green + 1
+      : red * 65_536 + green * 256 + blue;
+    return { index, code };
+  }).sort((left, right) => left.code - right.code || left.index - right.index).map(({ index }) => index);
+  const rank = new Map(ordered.map((index, position) => [index, position] as const));
+  const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => rank.get(index) ?? 0));
+  const pixels = width * height;
+  const bits: number[] = [];
+  const probabilities = new Map<number, [number, number]>();
+  let lower = 0;
+  let upper = 65_535;
+  let pending = 0;
+  const emitBit = (bit: number): void => {
+    bits.push(bit);
+    while (pending > 0) { bits.push(1 - bit); pending -= 1; }
+  };
+  const encodeBit = (key: number, bit: number): void => {
+    let [zeroes, ones] = probabilities.get(key) ?? [1, 1];
+    const middle = lower + Math.floor((upper - lower + 1) * zeroes / (zeroes + ones)) - 1;
+    if (bit === 0) upper = middle;
+    else lower = middle + 1;
+    while (true) {
+      if (upper < 32_768) emitBit(0);
+      else if (lower >= 32_768) { emitBit(1); lower -= 32_768; upper -= 32_768; }
+      else if (lower >= 16_384 && upper < 49_152) { pending += 1; lower -= 16_384; upper -= 16_384; }
+      else break;
+      lower *= 2;
+      upper = upper * 2 + 1;
+    }
+    if (bit === 0) zeroes += 1;
+    else ones += 1;
+    if (zeroes + ones >= 512) { zeroes = Math.floor((zeroes + 1) / 2); ones = Math.floor((ones + 1) / 2); }
+    probabilities.set(key, [zeroes, ones]);
+  };
+  const residuals: number[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const position = index % pixels;
+    const left = position % width > 0 ? values[index - 1] ?? -1 : -1;
+    const above = position >= width ? values[index - width] ?? -1 : -1;
+    const previous = index >= pixels ? values[index - pixels] ?? -1 : -1;
+    const agreement = Number(left === above) + 2 * Number(left === previous) + 4 * Number(above === previous);
+    const frame = Math.floor(index / pixels) % 32;
+    const previousResidual = index >= pixels ? residuals[index - pixels] ?? 0 : 0;
+    const leftResidual = position % width > 0 ? residuals[index - 1] ?? 0 : 0;
+    const aboveResidual = position >= width ? residuals[index - width] ?? 0 : 0;
+    const candidates = [left, above, previous];
+    let candidateCount = 0;
+    let matched = false;
+    for (let candidateIndex = 0; candidateIndex < 3; candidateIndex += 1) {
+      const candidate = candidates[candidateIndex] ?? -1;
+      if (candidate < 0 || candidates.slice(0, candidateIndex).includes(candidate)) continue;
+      const key = candidateCount * 65_536 + agreement * 8192 + previousResidual * 4096 + leftResidual * 2048 + aboveResidual * 1024 + frame * 32 + 1;
+      matched = candidate === values[index];
+      encodeBit(key, matched ? 0 : 1);
+      if (matched) break;
+      candidateCount += 1;
+    }
+    residuals.push(matched ? 0 : 1);
+    if (matched) continue;
+    const base = previous >= 0 ? previous : left >= 0 ? left : above >= 0 ? above : 0;
+    let delta = ((values[index] ?? 0) - base + ordered.length) % ordered.length;
+    if (delta > ordered.length / 2) delta -= ordered.length;
+    const zigzag = delta > 0 ? 2 * delta - 1 : -2 * delta;
+    let prefix = 1;
+    for (let bit = 8; bit >= 0; bit -= 1) {
+      const value = (zigzag >> bit) & 1;
+      const key = 1_000_000 + bit * 100_000 + prefix * 100 + (Math.floor(left / 64) + 1) * 10 + Math.floor(previous / 64) + 1;
+      encodeBit(key, value);
+      prefix = prefix * 2 + value;
+    }
+  }
+  pending += 1;
+  emitBit(lower < 16_384 ? 0 : 1);
+  bits.push(...Array.from({ length: 16 }, () => 0));
+  let data = '';
+  for (let index = 0; index < bits.length; index += 6) {
+    let value = 0;
+    for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
+    data += LZ_ALPHABET[value] ?? '';
+  }
+  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
+    const colour = palette.binaryGreyscale
+      ? `p=c*10 k=p//6+1 v=W(P,k)*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
+      : palette.nearGreyscale
+      ? `v=W(P,c*2+1)g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
+      : `local i=c*4+1 local v=W(P,i)*4096+W(P,i+2)S.setColor(v//65536,v//256%256,v%256)`;
+    const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end function W(s,i)return V(B(s,i))*64+V(B(s,i+1))end i=0 function bit()local k=i//6+1 local v=V(B(d,k)or 48)>>(5-i%6)&1 i=i+1 return v end l=0 h=65535 c=0 for j=1,16 do c=c*2+bit()end A={}C={}function R(k)local a=A[k]or 1 local b=C[k]or 1 local m=l+(h-l+1)*a//(a+b)-1 local v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while true do local e=h<32768 and 0 or l>=32768 and 32768 or l>=16384 and h<49152 and 16384 or -1 if e<0 then break end l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+bit()end if v==0 then a=a+1 else b=b+1 end if a+b>=512 then a=(a+1)//2 b=(b+1)//2 end A[k]=a C[k]=b return v end G={}for j=1,${values.length} do local p=(j-1)%${pixels} local L=p%${width}>0 and o[j-1]or -1 local U=p>=${width} and o[j-${width}]or -1 local T=j>${pixels} and o[j-${pixels}]or -1 local g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) local a={L,U,T}local seen={}local x=-1 local n=0 for t=1,3 do local v=a[t]if v>=0 and not seen[v]then seen[v]=true if R(n*65536+g*8192+(G[j-${pixels}]or 0)*4096+(p%${width}>0 and G[j-1]or 0)*2048+(p>=${width} and G[j-${width}]or 0)*1024+(j-1)//${pixels}%32*32+1)==0 then x=v break end n=n+1 end end local residual=x<0 if residual then x=0 local prefix=1 for z=8,0,-1 do local v=R(1000000+z*100000+prefix*100+(L//64+1)*10+(T//64+1))x=x*2+v prefix=prefix*2+v end local base=T>=0 and T or L>=0 and L or U>=0 and U or 0 x=(base+(x%2>0 and (x+1)//2 or -x//2))%${ordered.length} end G[j]=residual and 1 or 0 o[j]=x end `;
+    const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
+    return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
+  };
+  const normal = emitPalette(encodeLzPalette(colours, ordered));
+  const binary = binaryGreyscale ? emitPalette(encodeLzPalette(colours, ordered, true)) : '';
+  return binary && binary.length < normal.length ? binary : normal;
+}
+
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
 export function emitAnimationLuaLzFrames(
   frameIndices: readonly Uint16Array[],
