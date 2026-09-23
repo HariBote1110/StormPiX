@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `lz-pair-decoder.md` — 2文字数値復号とLua描画呼び出しを共通化し、astralを6,943文字へ短縮
 - `lz-search-depth.md` — 一致候補の条件付き追加探索でastralを6,954文字へ短縮し、トークン配分を比較
 - `lz-second-pass-golf.md` — Lua復号分岐を共通化し、astralを6,960文字へ短縮
 - `adaptive-lz-offsets.md` — 入力寸法と一致頻度からLZ専用距離を選び、astralを6,968文字へ短縮
