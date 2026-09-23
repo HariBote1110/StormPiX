@@ -485,7 +485,8 @@ export function emitAnimationLuaArithmeticFrames(
     for (let candidateIndex = 0; candidateIndex < 3; candidateIndex += 1) {
       const candidate = candidates[candidateIndex] ?? -1;
       if (candidate < 0 || (candidateIndex > 0 && candidate === left) || (candidateIndex === 2 && candidate === above)) continue;
-      const key = candidateCount * 65_536 + agreement * 8192 + previousResidual * 4096 + leftResidual * 2048 + aboveResidual * 1024 + frame * 32 + 1;
+      const boundary = (left < 0 ? 4 : 0) + (above < 0 ? 2 : 0);
+      const key = candidateCount * 65_536 + agreement * 8192 + previousResidual * 4096 + leftResidual * 2048 + aboveResidual * 1024 + frame * 32 + boundary + 1;
       matched = candidate === values[index];
       encodeBit(key, matched ? 0 : 1);
       if (matched) break;
@@ -500,7 +501,7 @@ export function emitAnimationLuaArithmeticFrames(
     let prefix = 1;
     for (let bit = 8; bit >= 0; bit -= 1) {
       const value = (zigzag >> bit) & 1;
-      const key = 1_000_000 + bit * 100_000 + prefix * 100 + (Math.floor(left / 64) + 1) * 10 + Math.floor(previous / 64) + 1;
+      const key = 1_000_000 + frame * 1_000_000 + bit * 100_000 + prefix * 100 + (Math.floor(left / 64) + 1) * 10 + Math.floor(previous / 64) + 1;
       encodeBit(key, value);
       prefix = prefix * 2 + value;
     }
@@ -539,9 +540,9 @@ export function emitAnimationLuaArithmeticFrames(
       ? `v=W(P,c*2+1)g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
       : `local i=c*4+1 local v=W(P,i)*4096+W(P,i+2)S.setColor(v//65536,v//256%256,v%256)`;
     const pairDecoder = delta ? '' : `function W(s,i)return V(B(s,i))*64+V(B(s,i+1))end `;
-    const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end ${pairDecoder}i=0 function X()local v=V(B(d,i//6+1)or 48)>>(5-i%6)&1 i=i+1 return v end l=0 h=65535 c=0 for j=1,16 do c=c*2+X()end A={}C={}function R(k)local a=A[k]or 1 b=C[k]or 1 m=l+(h-l+1)*a//(a+b)-1 local v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while true do e=l>>15==h>>15 and l&32768 or l>=16384 and h<49152 and 16384 or -1 if e<0 then break end l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+X()end if v==0 then a=a+1 else b=b+1 end if a+b>=512 then a=(a+1)//2 b=(b+1)//2 end A[k]=a C[k]=b return v end G={}for j=1,${values.length} do p=(j-1)%${pixels} L=p%${width}>0 and o[j-1]or -1 U=p>=${width} and o[j-${width}]or -1 T=j>${pixels} and o[j-${pixels}]or -1 g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) a={L,U,T}x=-1 n=0 for t=1,3 do v=a[t]if v>=0 and (t==1 or v~=L)and(t<3 or v~=U)then if R(n*65536+g*8192+(G[j-${pixels}]or 0)*4096+(p%${width}>0 and G[j-1]or 0)*2048+(p>=${width} and G[j-${width}]or 0)*1024+(j-1)//${pixels}%32*32+1)==0 then x=v break end n=n+1 end end G[j]=x<0 and 1 or 0 if G[j]>0 then x=0 r=1 for z=8,0,-1 do v=R(1000000+z*100000+r*100+(L//64+1)*10+(T//64+1))x=x*2+v r=r*2+v end w=T>=0 and T or L>=0 and L or U>=0 and U or 0 x=(w+(x%2>0 and (x+1)//2 or -x//2))%${ordered.length} end o[j]=x end `;
+    const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end ${pairDecoder}i=0 function X()local v=V(B(d,i//6+1)or 48)>>(5-i%6)&1 i=i+1 return v end l=0 h=65535 c=0 for j=1,16 do c=c*2+X()end A={}C={}function R(k)local a=A[k]or 1 b=C[k]or 1 m=l+(h-l+1)*a//(a+b)-1 local v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while true do e=l>>15==h>>15 and l&32768 or l>=16384 and h<49152 and 16384 or -1 if e<0 then break end l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+X()end if v==0 then a=a+1 else b=b+1 end if a+b>=512 then a=(a+1)//2 b=(b+1)//2 end A[k]=a C[k]=b return v end G={}for j=1,${values.length} do p=(j-1)%${pixels} F=(j-1)//${pixels}%32 L=p%${width}>0 and o[j-1]or -1 U=p>=${width} and o[j-${width}]or -1 T=j>${pixels} and o[j-${pixels}]or -1 g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) a={L,U,T}x=-1 n=0 for t=1,3 do v=a[t]if v>=0 and (t==1 or v~=L)and(t<3 or v~=U)then if R(n<<16|g<<13|(G[j-${pixels}]or 0)<<12|(p%${width}>0 and G[j-1]or 0)<<11|(p>=${width} and G[j-${width}]or 0)<<10|F<<5|(L<0 and 4 or 0)|(U<0 and 2 or 0)|1)==0 then x=v break end n=n+1 end end G[j]=x<0 and 1 or 0 if G[j]>0 then x=0 r=1 for z=8,0,-1 do v=R(-F*1000000-z*100000-r*100-(L//64+1)*10-(T//64+1))x=x*2+v r=r*2+v end w=T>=0 and T or L>=0 and L or U>=0 and U or 0 x=(w+(x%2>0 and (x+1)//2 or -x//2))%${ordered.length} end o[j]=x end `;
     const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
-    const paletteDecoder = delta ? `u={}v=0 for j=1,${ordered.length} do z=V(B(P,(j+1)//2))v=v+(j%2>0 and z>>3 or z&7)u[j]=v end ` : '';
+    const paletteDecoder = delta ? `u={}v=0 for j=1,#P do z=V(B(P,j))v=v+(z>>3)u[j*2-1]=v v=v+(z&7)u[j*2]=v end ` : '';
     return `${decoder}${paletteDecoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
   };
   const normal = emitPalette(encodeLzPalette(colours, ordered));
