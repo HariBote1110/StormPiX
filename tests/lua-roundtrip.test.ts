@@ -62,6 +62,32 @@ describe('Lua round-trip verification', () => {
     expect(replayLuaFrames(execution.frames, colours.length, 1)[0]?.data).toEqual(expected);
   });
 
+  it('derives LZ offsets from a differently sized animation', () => {
+    const width = 7;
+    const height = 4;
+    const colours = ['12,12,12', '52,52,52', '116,116,116', '212,212,212'];
+    const indices = Array.from({ length: 30 }, (_, frameIndex) => Uint16Array.from({ length: width * height }, (_, position) => {
+      const x = position % width;
+      const y = Math.floor(position / width);
+      return y < 2 ? (x + frameIndex % 3) % colours.length : (x * 3 + y + frameIndex % 5) % colours.length;
+    }));
+    const lua = emitAnimationLuaLzFrames(indices, width, height, colours);
+    expect(lua).toContain('x=({1,7,28');
+    expect(lua).not.toContain('3072');
+    const execution = executeLua(lua, { frameCount: indices.length, ticksPerFrame: 6, drawInitialFrame: true, width, height });
+    if (execution.skipped) return;
+    const rendered = replayLuaFrames(execution.frames, width, height);
+    for (let frameIndex = 0; frameIndex < indices.length; frameIndex += 1) {
+      const expected = new Uint8ClampedArray(width * height * 4);
+      for (let position = 0; position < width * height; position += 1) {
+        const channel = Number(colours[indices[frameIndex]?.[position] ?? 0]?.split(',')[0]);
+        expected.fill(channel, position * 4, position * 4 + 3);
+        expected[position * 4 + 3] = 255;
+      }
+      expect(rendered[frameIndex]?.data).toEqual(expected);
+    }
+  });
+
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
     const source = frame(8, 8, 2);
     const result = convert(source, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
