@@ -34,8 +34,11 @@ describe('Lua round-trip verification', () => {
     const indices = [Uint16Array.from([0, 1]), Uint16Array.from([1, 0])];
     const lua = emitAnimationLuaLzFrames(indices, 2, 1, ['20,20,20', '45,46,45']);
     const palette = lua.match(/P="([^"]*)"/)?.[1] ?? '';
+    const data = lua.match(/d="([^"]*)"/)?.[1] ?? '';
 
     expect(palette).toHaveLength(4);
+    expect(palette).toMatch(/^[0-9A-Za-z>?]+$/);
+    expect(data).toMatch(/^[0-9A-Za-z>?]+$/);
     expect(lua).not.toContain('A="');
     expect(lua).toContain('if v<58 then');
     expect(lua).toContain('if n<12 then');
