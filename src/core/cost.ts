@@ -178,7 +178,7 @@ export function emitAnimationLuaSharedPacked(
   return `S=screen A="${BASE64_ALPHABET}"p={${palette}}F=S.drawRectF ${decoder}${compactAnimationTick(ticksPerFrame, frameCount)}${playback}`;
 }
 
-function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number> } {
+function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean, offsets: readonly number[]): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number>; readonly matchFrequencies: ReadonlyMap<number, number> } {
   const references = new Map<string, number[]>();
   const keyAt = (index: number): string => index + 2 < values.length ? `${values[index]},${values[index + 1]},${values[index + 2]}` : '';
   const addReference = (index: number): void => {
@@ -191,6 +191,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
   };
   const pair = (value: number): string => `${LZ_ALPHABET[Math.floor(value / 64)] ?? ''}${LZ_ALPHABET[value % 64] ?? ''}`;
   const literalFrequencies = new Map<number, number>();
+  const matchFrequencies = new Map<number, number>();
   const literal = (value: number): string => {
     literalFrequencies.set(value, (literalFrequencies.get(value) ?? 0) + 1);
     if (!compactLiterals) return pair(value);
@@ -217,7 +218,9 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
       }
     }
     if (length >= 3) {
-      result += distance === 1 && length <= 48 ? LZ_ALPHABET[length + 9] ?? '' : distance === 1 || distance === 96 || distance === 3072 || distance === 288 || distance === 595 || distance === 2976 ? `${LZ_ALPHABET[distance === 1 ? 58 : distance === 96 ? 59 : distance === 3072 ? 60 : distance === 288 ? 61 : distance === 595 ? 62 : 63] ?? ''}${pair(length - 3)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      matchFrequencies.set(distance, (matchFrequencies.get(distance) ?? 0) + 1);
+      const specialIndex = offsets.indexOf(distance);
+      result += distance === 1 && length <= 54 - offsets.length ? LZ_ALPHABET[length + 9] ?? '' : specialIndex >= 0 ? `${LZ_ALPHABET[64 - offsets.length + specialIndex] ?? ''}${pair(length - 3)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
       for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
       index += length;
       continue;
@@ -240,12 +243,11 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
     result += LZ_ALPHABET[index - start - 1] ?? '';
     for (let offset = start; offset < index; offset += 1) result += literal(values[offset] as number);
   }
-  return { data: result, literalFrequencies };
+  return { data: result, literalFrequencies, matchFrequencies };
 }
 
-function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: boolean): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number> } {
+function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: boolean, offsets: readonly number[]): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number> } {
   const count = values.length;
-  const offsets = [1, 96, 3072, 288, 595, 2976];
   const repeats = offsets.map((distance) => {
     const lengths = new Uint16Array(count + 1);
     for (let index = count - 1; index >= distance; index -= 1) {
@@ -346,7 +348,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
     consider(3, generalLength, 5, 1, matchDistances[index] ?? 0);
     const specialLength = repeatMaximum[index] ?? 0;
     consider(3, specialLength, 3, 2, 0);
-    consider(3, Math.min(48, repeats[0]?.[index] ?? 0), 1, 3, 1);
+    consider(3, Math.min(54 - offsets.length, repeats[0]?.[index] ?? 0), 1, 3, 1);
     costs[index] = bestCost;
     update(index, bestCost);
   }
@@ -368,7 +370,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
       result += LZ_ALPHABET[length + 9] ?? '';
     } else if (kind === 2) {
       const specialIndex = repeats.findIndex((run) => (run[index] ?? 0) >= length);
-      result += `${LZ_ALPHABET[58 + specialIndex] ?? ''}${pair(length - 3)}`;
+      result += `${LZ_ALPHABET[64 - offsets.length + specialIndex] ?? ''}${pair(length - 3)}`;
     } else {
       const distance = chosenDistance[index] ?? 0;
       result += `!${pair(distance - 1)}${pair(length - 3)}`;
@@ -378,10 +380,10 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
   return { data: result, literalFrequencies };
 }
 
-function encodeLzPalette(colours: readonly string[], indexes: readonly number[]): { readonly data: string; readonly nearGreyscale: boolean; readonly binaryGreyscale: boolean } {
+function encodeLzPalette(colours: readonly string[], indexes: readonly number[], allowBinary = false): { readonly data: string; readonly nearGreyscale: boolean; readonly binaryGreyscale: boolean } {
   const values = indexes.map((index) => (colours[index] ?? '0,0,0').split(',').map(Number));
   const nearGreyscale = values.every((channels) => Math.abs((channels[0] ?? 0) - (channels[1] ?? 0)) <= 1 && Math.abs((channels[2] ?? 0) - (channels[1] ?? 0)) <= 1);
-  const binaryGreyscale = nearGreyscale && values.length >= 180 && values.every((channels) => (channels[0] ?? 0) <= (channels[1] ?? 0) && (channels[2] ?? 0) <= (channels[1] ?? 0));
+  const binaryGreyscale = allowBinary && nearGreyscale && values.every((channels) => (channels[0] ?? 0) <= (channels[1] ?? 0) && (channels[2] ?? 0) <= (channels[1] ?? 0));
   if (binaryGreyscale) {
     const bits: number[] = [];
     for (const channels of values) {
@@ -427,17 +429,25 @@ export function emitAnimationLuaLzFrames(
   if (sourceOrder.length === 0 || sourceOrder.length > 512) return '';
   const sourceMap = new Map(sourceOrder.map((index, compact) => [index, compact] as const));
   const preliminaryValues = frameIndices.flatMap((indices) => Array.from(indices, (index) => sourceMap.get(index) ?? 0));
-  const preliminary = encodeLzFrameStream(preliminaryValues, false);
-  let sourceIndexes = [...sourceOrder].sort((left, right) => {
+  const pixels = width * height;
+  const baseOffsets = [...new Set([1, width, pixels])].filter((distance) => distance <= 4096);
+  const preliminary = encodeLzFrameStream(preliminaryValues, false, baseOffsets);
+  const rankedOffsets = [...preliminary.matchFrequencies.entries()]
+    .filter(([distance]) => distance <= 4096 && !baseOffsets.includes(distance))
+    .sort((left, right) => right[1] - left[1] || left[0] - right[0])
+    .map(([distance]) => distance);
+  const initialIndexes = [...sourceOrder].sort((left, right) => {
     const frequencyDifference = (preliminary.literalFrequencies.get(sourceMap.get(right) ?? 0) ?? 0) - (preliminary.literalFrequencies.get(sourceMap.get(left) ?? 0) ?? 0);
     return frequencyDifference !== 0 ? frequencyDifference : (sourceMap.get(left) ?? 0) - (sourceMap.get(right) ?? 0);
   });
-  const compactLiterals = sourceIndexes.length <= 442;
+  const compactLiterals = initialIndexes.length <= 442;
+  const build = (offsets: readonly number[]): string => {
+  let sourceIndexes = initialIndexes;
   const encode = (indexes: readonly number[]) => {
     const compactIndexes = new Map(indexes.map((index, compact) => [index, compact] as const));
     const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
-    const greedy = encodeLzFrameStream(values, compactLiterals);
-    const costed = encodeCostedLzFrameStream(values, compactLiterals);
+    const greedy = encodeLzFrameStream(values, compactLiterals, offsets);
+    const costed = encodeCostedLzFrameStream(values, compactLiterals, offsets);
     return costed.data.length < greedy.data.length
       ? { data: costed.data, frequencies: costed.literalFrequencies }
       : { data: greedy.data, frequencies: greedy.literalFrequencies };
@@ -451,12 +461,11 @@ export function emitAnimationLuaLzFrames(
     if (revised.data.length < encoded.data.length) { sourceIndexes = reordered; encoded = revised; }
   }
   const data = encoded.data;
-  const palette = encodeLzPalette(colours, sourceIndexes);
-  const pixels = width * height;
   const literalDecoder = compactLiterals
     ? `local v=V(B(d,i))i=i+1 if v>57 then v=58+(v-58)*64+V(B(d,i))i=i+1 end o[#o+1]=v `
     : `o[#o+1]=V(B(d,i))*64+V(B(d,i+1))i=i+2 `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 n=V(B(d,i+2))*64+V(B(d,i+3))+3 i=i+4 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<58 then x=1 n=n-9 else x=({1,96,3072,288,595,2976})[n-57]n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
+  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
+  const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 n=V(B(d,i+2))*64+V(B(d,i+3))+3 i=i+4 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<${64 - offsets.length} then x=1 n=n-9 else x=({${offsets.join(',')}})[n-${63 - offsets.length}]n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
   const colour = palette.binaryGreyscale
     ? `p=c*10 k=p//6+1 v=V(B(P,k))*4096+V(B(P,k+1))*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
     : palette.nearGreyscale
@@ -464,6 +473,17 @@ export function emitAnimationLuaLzFrames(
     : `local i=c*4+1 local v=V(B(P,i))*262144+V(B(P,i+1))*4096+V(B(P,i+2))*64+V(B(P,i+3))S.setColor(v//65536,v//256%256,v%256)`;
   const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},z//${width},1,1)end end`;
   return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
+  };
+  const normal = emitPalette(encodeLzPalette(colours, sourceIndexes));
+  const binary = emitPalette(encodeLzPalette(colours, sourceIndexes, true));
+  return binary.length < normal.length ? binary : normal;
+  };
+  let best = build(baseOffsets);
+  for (let count = 1; count <= Math.min(6 - baseOffsets.length, rankedOffsets.length); count += 1) {
+    const candidate = build([...baseOffsets, ...rankedOffsets.slice(0, count)]);
+    if (candidate.length < best.length) best = candidate;
+  }
+  return best;
 }
 
 function emitTable(ops: readonly DrawOp[]): string {

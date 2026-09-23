@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `adaptive-lz-offsets.md` — 入力寸法と一致頻度からLZ専用距離を選び、astralを6,968文字へ短縮
 - `binary-near-greyscale-palette.md` — RGB差分を2 bitへ可逆化し、10 bit連続パレットでastralを6,975文字へ短縮
 - `lz-costed-stream.md` — DPパース、距離1の1文字参照、palette再整列を測定し、astralを7,097文字へ短縮
 - `lz-playback-division.md` — tickと描画でLua 5.3整数除算を使い、復号・描画器を短縮

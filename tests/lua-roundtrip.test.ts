@@ -95,7 +95,7 @@ describe('Lua round-trip verification', () => {
     });
     const indices = [Uint16Array.from({ length: colours.length }, (_, index) => index)];
     const lua = emitAnimationLuaLzFrames(indices, colours.length, 1, colours);
-    expect(lua.match(/P="([^"]*)"/)?.[1].length).toBeLessThan(colours.length * 2);
+    expect((lua.match(/P="([^"]*)"/)?.[1] ?? '').length).toBeLessThan(colours.length * 2);
     const execution = executeLua(lua, { frameCount: 1, drawInitialFrame: true, width: colours.length, height: 1 });
     if (execution.skipped) return;
     expect(execution.frames).toHaveLength(1);
