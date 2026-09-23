@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { convert, convertFrames, replayLuaFrames, type Bitmap, type EmitStrategy } from '../src/core/index';
 import { executeLua } from './lua-executor';
-import { emitAnimationLuaLzFrames } from '../src/core/cost';
+import { emitAnimationLuaArithmeticFrames, emitAnimationLuaLzFrames } from '../src/core/cost';
 
 function frame(width: number, height: number, shift: number): Bitmap {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -17,6 +17,18 @@ function frame(width: number, height: number, shift: number): Bitmap {
 }
 
 describe('Lua round-trip verification', () => {
+  it('executes the arithmetic frame stream on a small colour animation', () => {
+    const frames = [frame(8, 8, 0), frame(8, 8, 2), frame(8, 8, 4)];
+    const colours = ['15,25,45', '230,170,40'];
+    const indices = frames.map((bitmap) => Uint16Array.from({ length: bitmap.width * bitmap.height }, (_, pixel) => bitmap.data[pixel * 4] === 230 ? 1 : 0));
+    const lua = emitAnimationLuaArithmeticFrames(indices, 8, 8, colours, 2);
+    expect(lua.match(/d="([^"]*)"/)?.[1]).toMatch(/^[0-9A-Za-z>?]+$/);
+    const execution = executeLua(lua, { frameCount: frames.length, ticksPerFrame: 2, drawInitialFrame: true, width: 8, height: 8 });
+    if (execution.skipped) return;
+    const rendered = replayLuaFrames(execution.frames, 8, 8);
+    for (let index = 0; index < frames.length; index += 1) expect(rendered[index]?.data).toEqual(frames[index]?.data);
+  });
+
   it('executes the LZ frame stream and reproduces every frame', () => {
     const frames = [frame(8, 8, 0), frame(8, 8, 2), frame(8, 8, 4)];
     const colours = ['15,25,45', '230,170,40'];
