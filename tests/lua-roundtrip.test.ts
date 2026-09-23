@@ -37,14 +37,14 @@ describe('Lua round-trip verification', () => {
     const data = lua.match(/d="([^"]*)"/)?.[1] ?? '';
 
     expect(palette).toHaveLength(4);
-    expect(palette).toMatch(/^[0-9A-Za-z>?]+$/);
-    expect(data).toMatch(/^[0-9A-Za-z>?]+$/);
+    expect(palette).toMatch(/^[0-9A-Za-z>?!]+$/);
+    expect(data).toMatch(/^[0-9A-Za-z>?!]+$/);
     expect(lua).not.toContain('A="');
     expect(lua).toContain('if v<58 then');
     expect(lua).toContain('if n<12 then');
     expect(lua).not.toContain('p={}');
-    expect(lua).toContain('n>95');
-    expect(lua.length).toBeLessThanOrEqual(790);
+    expect(lua).toContain('n>96');
+    expect(lua.length).toBeLessThanOrEqual(825);
   });
 
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {

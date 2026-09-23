@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `lz-transport-safe-alphabet.md` — Stormworks転送でLZストリームが壊れないよう、英数字中心のalphabetへ戻す決定
 - `lz-token-partition-search.md` — LZ通常トークンの配分を実資産で探索し、astral_openingを7,962文字まで圧縮する決定
 - `lz-token-partition.md` — LZ符号をリテラル31長・短距離参照35長へ再配分し、astral_openingを10文字削減する決定
 - `lz-decoder-micro-optimisation.md` — LZ復号・描画器の等価な局所短縮でastral_openingを5文字削減する決定
