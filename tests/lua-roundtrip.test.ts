@@ -88,6 +88,19 @@ describe('Lua round-trip verification', () => {
     }
   });
 
+  it('selects the shorter binary near-greyscale palette by total Lua cost', () => {
+    const colours = Array.from({ length: 170 }, (_, index) => {
+      const grey = Math.floor(index / 4) + 1;
+      return `${grey - (index % 2)},${grey},${grey - (Math.floor(index / 2) % 2)}`;
+    });
+    const indices = [Uint16Array.from({ length: colours.length }, (_, index) => index)];
+    const lua = emitAnimationLuaLzFrames(indices, colours.length, 1, colours);
+    expect(lua.match(/P="([^"]*)"/)?.[1].length).toBeLessThan(colours.length * 2);
+    const execution = executeLua(lua, { frameCount: 1, drawInitialFrame: true, width: colours.length, height: 1 });
+    if (execution.skipped) return;
+    expect(execution.frames).toHaveLength(1);
+  });
+
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
     const source = frame(8, 8, 2);
     const result = convert(source, { mode: 'fit', budget: 8192, maxColours: 2, strategies: [strategy], seed: 0 });
