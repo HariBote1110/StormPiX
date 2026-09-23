@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `lz-second-pass-golf.md` — Lua復号分岐を共通化し、astralを6,960文字へ短縮
 - `adaptive-lz-offsets.md` — 入力寸法と一致頻度からLZ専用距離を選び、astralを6,968文字へ短縮
 - `binary-near-greyscale-palette.md` — RGB差分を2 bitへ可逆化し、10 bit連続パレットでastralを6,975文字へ短縮
 - `lz-costed-stream.md` — DPパース、距離1の1文字参照、palette再整列を測定し、astralを7,097文字へ短縮
