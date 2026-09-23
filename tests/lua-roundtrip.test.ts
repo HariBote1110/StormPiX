@@ -40,11 +40,26 @@ describe('Lua round-trip verification', () => {
     expect(palette).toMatch(/^[0-9A-Za-z>?!]+$/);
     expect(data).toMatch(/^[0-9A-Za-z>?!]+$/);
     expect(lua).not.toContain('A="');
-    expect(lua).toContain('if v<58 then');
+    expect(lua).toContain('if v>57 then');
     expect(lua).toContain('if n<12 then');
     expect(lua).not.toContain('p={}');
     expect(lua).toContain('n>96');
     expect(lua.length).toBeLessThanOrEqual(825);
+  });
+
+  it('replays a palette beyond the compact literal limit', () => {
+    const colours = Array.from({ length: 443 }, (_, index) => `${index % 256},${Math.floor(index / 256)},0`);
+    const indices = [Uint16Array.from({ length: colours.length }, (_, index) => index)];
+    const lua = emitAnimationLuaLzFrames(indices, colours.length, 1, colours);
+    const execution = executeLua(lua, { frameCount: 1, drawInitialFrame: true, width: colours.length, height: 1 });
+    if (execution.skipped) return;
+    const expected = new Uint8ClampedArray(colours.length * 4);
+    for (let index = 0; index < colours.length; index += 1) {
+      expected[index * 4] = index % 256;
+      expected[index * 4 + 1] = Math.floor(index / 256);
+      expected[index * 4 + 3] = 255;
+    }
+    expect(replayLuaFrames(execution.frames, colours.length, 1)[0]?.data).toEqual(expected);
   });
 
   it.each(['direct', 'table', 'packed'] as const)('executes the %s emitter and reproduces rectangles', (strategy: EmitStrategy) => {
