@@ -46,9 +46,11 @@ describe('外部フレーム番号', () => {
     const result = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
     expect(result.withinBudget).toBe(true);
     expect(result.scripts).toHaveLength(1);
-    expect(result.totalCharCount).toBeLessThan(6_943);
+    expect(result.totalCharCount).toBeLessThan(6_500);
     expect(result.lua).toContain('function R(k)');
-    expect(result.lua.match(/P="([^"]*)"/)?.[1]).toMatch(/^[0-9A-Za-z>?]+$/);
+    const palette = result.lua.match(/P="([^"]*)"/)?.[1] ?? '';
+    expect(palette).toMatch(/^[0-9A-Za-z>?]+$/);
+    expect(palette.length).toBeLessThan(300);
     expect(result.lua.match(/d="([^"]*)"/)?.[1]).toMatch(/^[0-9A-Za-z>?!]+$/);
     const execution = executeLua(result.lua, { frameCount: frames.length, ticksPerFrame: 6, drawInitialFrame: true, width: 96, height: 32 });
     if (execution.skipped) return;
