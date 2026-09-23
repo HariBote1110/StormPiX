@@ -1,5 +1,10 @@
 # 進捗記録
 
+- `binary-near-greyscale-palette.md` — RGB差分を2 bitへ可逆化し、10 bit連続パレットでastralを6,975文字へ短縮
+- `lz-costed-stream.md` — DPパース、距離1の1文字参照、palette再整列を測定し、astralを7,097文字へ短縮
+- `lz-playback-division.md` — tickと描画でLua 5.3整数除算を使い、復号・描画器を短縮
+- `lz-frequent-offsets.md` — 長距離一致の頻出距離を専用トークン化し、astralを7,714文字へ短縮
+- `lz-decoder-shared-copy.md` — LZ参照のコピー処理とリテラル書き込みを共通化し、astralを7,945文字へ短縮
 - `lz-transport-safe-alphabet.md` — Stormworks転送でLZストリームが壊れないよう、英数字中心のalphabetへ戻す決定
 - `lz-token-partition-search.md` — LZ通常トークンの配分を実資産で探索し、astral_openingを7,962文字まで圧縮する決定
 - `lz-token-partition.md` — LZ符号をリテラル31長・短距離参照35長へ再配分し、astral_openingを10文字削減する決定

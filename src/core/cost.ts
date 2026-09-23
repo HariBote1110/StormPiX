@@ -193,7 +193,8 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
   const literalFrequencies = new Map<number, number>();
   const literal = (value: number): string => {
     literalFrequencies.set(value, (literalFrequencies.get(value) ?? 0) + 1);
-    if (!compactLiterals || value < 58) return LZ_ALPHABET[value] ?? '';
+    if (!compactLiterals) return pair(value);
+    if (value < 58) return LZ_ALPHABET[value] ?? '';
     const offset = value - 58;
     return `${LZ_ALPHABET[58 + Math.floor(offset / 64)] ?? ''}${LZ_ALPHABET[offset % 64] ?? ''}`;
   };
@@ -216,7 +217,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
       }
     }
     if (length >= 3) {
-      result += length <= 54 ? `${LZ_ALPHABET[length + 9] ?? ''}${pair(distance - 1)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      result += distance === 1 && length <= 48 ? LZ_ALPHABET[length + 9] ?? '' : distance === 1 || distance === 96 || distance === 3072 || distance === 288 || distance === 595 || distance === 2976 ? `${LZ_ALPHABET[distance === 1 ? 58 : distance === 96 ? 59 : distance === 3072 ? 60 : distance === 288 ? 61 : distance === 595 ? 62 : 63] ?? ''}${pair(length - 3)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
       for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
       index += length;
       continue;
@@ -242,9 +243,159 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
   return { data: result, literalFrequencies };
 }
 
-function encodeLzPalette(colours: readonly string[], indexes: readonly number[]): { readonly data: string; readonly nearGreyscale: boolean } {
+function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: boolean): { readonly data: string; readonly literalFrequencies: ReadonlyMap<number, number> } {
+  const count = values.length;
+  const offsets = [1, 96, 3072, 288, 595, 2976];
+  const repeats = offsets.map((distance) => {
+    const lengths = new Uint16Array(count + 1);
+    for (let index = count - 1; index >= distance; index -= 1) {
+      if (values[index] === values[index - distance]) lengths[index] = Math.min(4098, (lengths[index + 1] ?? 0) + 1);
+    }
+    return lengths;
+  });
+  const repeatMaximum = new Uint16Array(count);
+  for (const run of repeats) for (let index = 0; index < count; index += 1) repeatMaximum[index] = Math.max(repeatMaximum[index] ?? 0, run[index] ?? 0);
+  const matchLengths = new Uint16Array(count);
+  const matchDistances = new Uint16Array(count);
+  const references = new Map<string, number[]>();
+  for (let index = 0; index + 2 < count; index += 1) {
+    const key = `${values[index]},${values[index + 1]},${values[index + 2]}`;
+    const candidates = references.get(key) ?? [];
+    let length = 0;
+    let distance = 0;
+    if ((repeatMaximum[index] ?? 0) < 4098) {
+      for (let candidateIndex = candidates.length - 1, checked = 0; candidateIndex >= 0 && checked < 4; candidateIndex -= 1) {
+        const candidate = candidates[candidateIndex] as number;
+        const offset = index - candidate;
+        if (offset > 4096) break;
+        checked += 1;
+        let matched = 3;
+        while (matched < 4098 && index + matched < count && values[candidate + matched] === values[index + matched]) matched += 1;
+        if (matched > length) { length = matched; distance = offset; }
+        if (length === 4098) break;
+      }
+    }
+    matchLengths[index] = length;
+    matchDistances[index] = distance;
+    candidates.push(index);
+    references.set(key, candidates);
+  }
+
+  let size = 1;
+  while (size <= count) size *= 2;
+  const minimum = new Float64Array(size * 2).fill(Number.POSITIVE_INFINITY);
+  const positions = new Int32Array(size * 2);
+  const costs = new Float64Array(count + 1);
+  const chosenLength = new Uint16Array(count);
+  const chosenDistance = new Uint16Array(count);
+  const chosenKind = new Uint8Array(count);
+  const update = (index: number, cost: number): void => {
+    let node = index + size;
+    minimum[node] = cost;
+    positions[node] = index;
+    while (node > 1) {
+      node = Math.floor(node / 2);
+      const left = node * 2;
+      const right = left + 1;
+      const selected = (minimum[left] ?? Infinity) <= (minimum[right] ?? Infinity) ? left : right;
+      minimum[node] = minimum[selected] as number;
+      positions[node] = positions[selected] as number;
+    }
+  };
+  const query = (start: number, end: number): number => {
+    let left = start + size;
+    let right = end + size;
+    let best = Number.POSITIVE_INFINITY;
+    let position = start;
+    while (left < right) {
+      if (left % 2 === 1) {
+        if ((minimum[left] ?? Infinity) < best) { best = minimum[left] as number; position = positions[left] as number; }
+        left += 1;
+      }
+      if (right % 2 === 1) {
+        right -= 1;
+        if ((minimum[right] ?? Infinity) < best) { best = minimum[right] as number; position = positions[right] as number; }
+      }
+      left = Math.floor(left / 2);
+      right = Math.floor(right / 2);
+    }
+    return position;
+  };
+  update(count, 0);
+  for (let index = count - 1; index >= 0; index -= 1) {
+    let literalCost = 1;
+    let bestCost = Number.POSITIVE_INFINITY;
+    for (let length = 1; length <= 12 && index + length <= count; length += 1) {
+      const value = values[index + length - 1] as number;
+      literalCost += !compactLiterals || value >= 58 ? 2 : 1;
+      const cost = literalCost + (costs[index + length] ?? 0);
+      if (cost < bestCost) { bestCost = cost; chosenLength[index] = length; chosenKind[index] = 0; }
+    }
+    const consider = (first: number, last: number, tokenCost: number, kind: number, distance: number): void => {
+      if (last < first) return;
+      const finish = query(index + first, Math.min(count, index + last) + 1);
+      const cost = tokenCost + (costs[finish] ?? 0);
+      if (cost < bestCost) {
+        bestCost = cost;
+        chosenLength[index] = finish - index;
+        chosenKind[index] = kind;
+        chosenDistance[index] = distance;
+      }
+    };
+    const generalLength = matchLengths[index] ?? 0;
+    consider(3, generalLength, 5, 1, matchDistances[index] ?? 0);
+    const specialLength = repeatMaximum[index] ?? 0;
+    consider(3, specialLength, 3, 2, 0);
+    consider(3, Math.min(48, repeats[0]?.[index] ?? 0), 1, 3, 1);
+    costs[index] = bestCost;
+    update(index, bestCost);
+  }
+
+  const pair = (value: number): string => `${LZ_ALPHABET[Math.floor(value / 64)] ?? ''}${LZ_ALPHABET[value % 64] ?? ''}`;
+  let result = '';
+  const literalFrequencies = new Map<number, number>();
+  for (let index = 0; index < count;) {
+    const length = chosenLength[index] ?? 0;
+    const kind = chosenKind[index] ?? 0;
+    if (kind === 0) {
+      result += LZ_ALPHABET[length - 1] ?? '';
+      for (let offset = 0; offset < length; offset += 1) {
+        const value = values[index + offset] as number;
+        literalFrequencies.set(value, (literalFrequencies.get(value) ?? 0) + 1);
+        result += !compactLiterals ? pair(value) : value >= 58 ? `${LZ_ALPHABET[58 + Math.floor((value - 58) / 64)] ?? ''}${LZ_ALPHABET[(value - 58) % 64] ?? ''}` : LZ_ALPHABET[value] ?? '';
+      }
+    } else if (kind === 3) {
+      result += LZ_ALPHABET[length + 9] ?? '';
+    } else if (kind === 2) {
+      const specialIndex = repeats.findIndex((run) => (run[index] ?? 0) >= length);
+      result += `${LZ_ALPHABET[58 + specialIndex] ?? ''}${pair(length - 3)}`;
+    } else {
+      const distance = chosenDistance[index] ?? 0;
+      result += `!${pair(distance - 1)}${pair(length - 3)}`;
+    }
+    index += length;
+  }
+  return { data: result, literalFrequencies };
+}
+
+function encodeLzPalette(colours: readonly string[], indexes: readonly number[]): { readonly data: string; readonly nearGreyscale: boolean; readonly binaryGreyscale: boolean } {
   const values = indexes.map((index) => (colours[index] ?? '0,0,0').split(',').map(Number));
   const nearGreyscale = values.every((channels) => Math.abs((channels[0] ?? 0) - (channels[1] ?? 0)) <= 1 && Math.abs((channels[2] ?? 0) - (channels[1] ?? 0)) <= 1);
+  const binaryGreyscale = nearGreyscale && values.length >= 180 && values.every((channels) => (channels[0] ?? 0) <= (channels[1] ?? 0) && (channels[2] ?? 0) <= (channels[1] ?? 0));
+  if (binaryGreyscale) {
+    const bits: number[] = [];
+    for (const channels of values) {
+      const base = channels[1] ?? 0;
+      appendBits(bits, base * 4 + ((channels[0] ?? 0) - base + 1) * 2 + ((channels[2] ?? 0) - base + 1), 10);
+    }
+    let data = '';
+    for (let index = 0; index < bits.length; index += 6) {
+      let value = 0;
+      for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
+      data += LZ_ALPHABET[value] ?? '';
+    }
+    return { data: `${data}0`, nearGreyscale, binaryGreyscale };
+  }
   let result = '';
   for (const channels of values) {
     if (nearGreyscale) {
@@ -260,7 +411,7 @@ function encodeLzPalette(colours: readonly string[], indexes: readonly number[])
     result += LZ_ALPHABET[Math.floor(value / 64) % 64] ?? '';
     result += LZ_ALPHABET[value % 64] ?? '';
   }
-  return { data: result, nearGreyscale };
+  return { data: result, nearGreyscale, binaryGreyscale };
 }
 
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
@@ -277,25 +428,42 @@ export function emitAnimationLuaLzFrames(
   const sourceMap = new Map(sourceOrder.map((index, compact) => [index, compact] as const));
   const preliminaryValues = frameIndices.flatMap((indices) => Array.from(indices, (index) => sourceMap.get(index) ?? 0));
   const preliminary = encodeLzFrameStream(preliminaryValues, false);
-  const sourceIndexes = [...sourceOrder].sort((left, right) => {
+  let sourceIndexes = [...sourceOrder].sort((left, right) => {
     const frequencyDifference = (preliminary.literalFrequencies.get(sourceMap.get(right) ?? 0) ?? 0) - (preliminary.literalFrequencies.get(sourceMap.get(left) ?? 0) ?? 0);
     return frequencyDifference !== 0 ? frequencyDifference : (sourceMap.get(left) ?? 0) - (sourceMap.get(right) ?? 0);
   });
-  const compactIndexes = new Map(sourceIndexes.map((index, compact) => [index, compact] as const));
-  const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
   const compactLiterals = sourceIndexes.length <= 442;
-  const data = encodeLzFrameStream(values, compactLiterals).data;
+  const encode = (indexes: readonly number[]) => {
+    const compactIndexes = new Map(indexes.map((index, compact) => [index, compact] as const));
+    const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
+    const greedy = encodeLzFrameStream(values, compactLiterals);
+    const costed = encodeCostedLzFrameStream(values, compactLiterals);
+    return costed.data.length < greedy.data.length
+      ? { data: costed.data, frequencies: costed.literalFrequencies }
+      : { data: greedy.data, frequencies: greedy.literalFrequencies };
+  };
+  let encoded = encode(sourceIndexes);
+  if (compactLiterals) {
+    const currentOrder = new Map(sourceIndexes.map((index, position) => [index, position] as const));
+    const frequencyBySource = new Map(sourceIndexes.map((index, position) => [index, encoded.frequencies.get(position) ?? 0] as const));
+    const reordered = [...sourceIndexes].sort((left, right) => (frequencyBySource.get(right) ?? 0) - (frequencyBySource.get(left) ?? 0) || (currentOrder.get(left) ?? 0) - (currentOrder.get(right) ?? 0));
+    const revised = encode(reordered);
+    if (revised.data.length < encoded.data.length) { sourceIndexes = reordered; encoded = revised; }
+  }
+  const data = encoded.data;
   const palette = encodeLzPalette(colours, sourceIndexes);
   const pixels = width * height;
   const literalDecoder = compactLiterals
-    ? `local v=V(d:byte(i))i=i+1 if v<58 then o[#o+1]=v else o[#o+1]=58+(v-58)*64+V(d:byte(i))i=i+1 end `
-    : `o[#o+1]=V(d:byte(i))*64+V(d:byte(i+1))i=i+2 `;
-  const decoder = `S=screen P="${palette.data}"d="${data}"o={}m=math.floor function V(n)return n>96 and n-61 or n>64 and n-55 or n<58 and n-48 or n end i=1 while i<=#d do local z=d:byte(i)if z==33 then local x=V(d:byte(i+1))*64+V(d:byte(i+2))+1 local n=V(d:byte(i+3))*64+V(d:byte(i+4))+3 for j=1,n do o[#o+1]=o[#o-x+1]end i=i+5 else local n=V(z)i=i+1 if n<12 then for j=1,n+1 do ${literalDecoder}end else local x=V(d:byte(i))*64+V(d:byte(i+1))+1 for j=1,n-9 do o[#o+1]=o[#o-x+1]end i=i+2 end end end F=S.drawRectF `;
-  const colour = palette.nearGreyscale
-    ? `local v=V(P:byte(c*2+1))*64+V(P:byte(c*2+2))local g=m(v/16)S.setColor(g+m(v/4)%4-1,g,g+v%4-1)`
-    : `local i=c*4+1 local v=V(P:byte(i))*262144+V(P:byte(i+1))*4096+V(P:byte(i+2))*64+V(P:byte(i+3))S.setColor(m(v/65536),m(v/256)%256,v%256)`;
-  const draw = `function onDraw()local q for z=0,${pixels - 1} do local c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},m(z/${width}),1,1)end end`;
-  return `${decoder}${compactAnimationTick(ticksPerFrame, frameIndices.length)}${draw}`;
+    ? `local v=V(B(d,i))i=i+1 if v>57 then v=58+(v-58)*64+V(B(d,i))i=i+1 end o[#o+1]=v `
+    : `o[#o+1]=V(B(d,i))*64+V(B(d,i+1))i=i+2 `;
+  const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 n=V(B(d,i+2))*64+V(B(d,i+3))+3 i=i+4 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<58 then x=1 n=n-9 else x=({1,96,3072,288,595,2976})[n-57]n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
+  const colour = palette.binaryGreyscale
+    ? `p=c*10 k=p//6+1 v=V(B(P,k))*4096+V(B(P,k+1))*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
+    : palette.nearGreyscale
+    ? `v=V(B(P,c*2+1))*64+V(B(P,c*2+2))g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
+    : `local i=c*4+1 local v=V(B(P,i))*262144+V(B(P,i+1))*4096+V(B(P,i+2))*64+V(B(P,i+3))S.setColor(v//65536,v//256%256,v%256)`;
+  const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},z//${width},1,1)end end`;
+  return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
 }
 
 function emitTable(ops: readonly DrawOp[]): string {
