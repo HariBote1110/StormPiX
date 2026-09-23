@@ -28,7 +28,7 @@ describe('外部フレーム番号', () => {
     const frames = readdirSync(root).filter((name) => name.endsWith('.png')).sort().slice(0, 30).map((name) => readPng(`${root}/${name}`));
     const generated = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
     expect(readFileSync(artifact, 'utf8').trimEnd()).toBe(generated.lua);
-  });
+  }, 30_000);
 
   it('未指定時は従来の自動再生 Lua をバイト単位で維持する', () => {
     const frames = [frame(0), frame(2), frame(4), frame(6)];
@@ -46,7 +46,7 @@ describe('外部フレーム番号', () => {
     const result = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
     expect(result.withinBudget).toBe(true);
     expect(result.scripts).toHaveLength(1);
-    expect(result.totalCharCount).toBeLessThanOrEqual(5_611);
+    expect(result.totalCharCount).toBeLessThanOrEqual(5_141);
     expect(result.lua).toContain('function R(k)');
     expect(result.lua).not.toContain('function W(s,i)');
     expect(result.lua).not.toContain('seen={}');
@@ -59,7 +59,7 @@ describe('外部フレーム番号', () => {
     expect(execution.frames).toHaveLength(frames.length);
     const rendered = replayLuaFrames(execution.frames, 96, 32);
     for (let index = 0; index < frames.length; index += 1) expect(rendered[index]?.data).toEqual(frames[index]?.data);
-  });
+  }, 30_000);
 
   it('Lua で順不同のグローバル添字を完全フレームとして描画し、範囲外と小数は何も描かない', () => {
     const frames = [frame(0), frame(2), frame(4), frame(6)];

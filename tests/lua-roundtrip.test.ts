@@ -22,6 +22,7 @@ describe('Lua round-trip verification', () => {
     const colours = ['15,25,45', '230,170,40'];
     const indices = frames.map((bitmap) => Uint16Array.from({ length: bitmap.width * bitmap.height }, (_, pixel) => bitmap.data[pixel * 4] === 230 ? 1 : 0));
     const lua = emitAnimationLuaArithmeticFrames(indices, 8, 8, colours, 2);
+    expect(lua).toContain('for z=0,0,-1');
     expect(lua.match(/d="([^"]*)"/)?.[1]).toMatch(/^[0-9A-Za-z>?]+$/);
     const execution = executeLua(lua, { frameCount: frames.length, ticksPerFrame: 2, drawInitialFrame: true, width: 8, height: 8 });
     if (execution.skipped) return;
