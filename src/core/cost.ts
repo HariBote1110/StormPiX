@@ -267,7 +267,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
     let length = 0;
     let distance = 0;
     if ((repeatMaximum[index] ?? 0) < 4098) {
-      for (let candidateIndex = candidates.length - 1, checked = 0; candidateIndex >= 0 && checked < 4; candidateIndex -= 1) {
+      for (let candidateIndex = candidates.length - 1, checked = 0; candidateIndex >= 0 && (checked < 4 || checked < 64 && length < LZ_LITERAL_RUN_LIMIT); candidateIndex -= 1) {
         const candidate = candidates[candidateIndex] as number;
         const offset = index - candidate;
         if (offset > 4096) break;
