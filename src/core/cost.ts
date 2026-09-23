@@ -484,7 +484,7 @@ export function emitAnimationLuaArithmeticFrames(
     let matched = false;
     for (let candidateIndex = 0; candidateIndex < 3; candidateIndex += 1) {
       const candidate = candidates[candidateIndex] ?? -1;
-      if (candidate < 0 || candidates.slice(0, candidateIndex).includes(candidate)) continue;
+      if (candidate < 0 || (candidateIndex > 0 && candidate === left) || (candidateIndex === 2 && candidate === above)) continue;
       const key = candidateCount * 65_536 + agreement * 8192 + previousResidual * 4096 + leftResidual * 2048 + aboveResidual * 1024 + frame * 32 + 1;
       matched = candidate === values[index];
       encodeBit(key, matched ? 0 : 1);
