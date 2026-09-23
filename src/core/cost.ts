@@ -514,19 +514,40 @@ export function emitAnimationLuaArithmeticFrames(
     for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
     data += LZ_ALPHABET[value] ?? '';
   }
-  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
-    const colour = palette.binaryGreyscale
+  const deltaPalette = (): string | undefined => {
+    if (!binaryGreyscale) return undefined;
+    let previous = 0;
+    const differences: number[] = [];
+    for (const index of ordered) {
+      const [red = 0, green = 0, blue = 0] = (colours[index] ?? '0,0,0').split(',').map(Number);
+      const value = green * 4 + (red - green + 1) * 2 + blue - green + 1;
+      const difference = value - previous;
+      if (difference < 0 || difference > 7) return undefined;
+      differences.push(difference);
+      previous = value;
+    }
+    let encoded = '';
+    for (let index = 0; index < differences.length; index += 2) encoded += LZ_ALPHABET[(differences[index] ?? 0) * 8 + (differences[index + 1] ?? 0)] ?? '';
+    return encoded;
+  };
+  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>, delta = false): string => {
+    const colour = delta
+      ? `v=u[c+1]g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
+      : palette.binaryGreyscale
       ? `p=c*10 k=p//6+1 v=W(P,k)*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
       : palette.nearGreyscale
       ? `v=W(P,c*2+1)g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
       : `local i=c*4+1 local v=W(P,i)*4096+W(P,i+2)S.setColor(v//65536,v//256%256,v%256)`;
     const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end function W(s,i)return V(B(s,i))*64+V(B(s,i+1))end i=0 function bit()local k=i//6+1 local v=V(B(d,k)or 48)>>(5-i%6)&1 i=i+1 return v end l=0 h=65535 c=0 for j=1,16 do c=c*2+bit()end A={}C={}function R(k)local a=A[k]or 1 local b=C[k]or 1 local m=l+(h-l+1)*a//(a+b)-1 local v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while true do local e=h<32768 and 0 or l>=32768 and 32768 or l>=16384 and h<49152 and 16384 or -1 if e<0 then break end l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+bit()end if v==0 then a=a+1 else b=b+1 end if a+b>=512 then a=(a+1)//2 b=(b+1)//2 end A[k]=a C[k]=b return v end G={}for j=1,${values.length} do local p=(j-1)%${pixels} local L=p%${width}>0 and o[j-1]or -1 local U=p>=${width} and o[j-${width}]or -1 local T=j>${pixels} and o[j-${pixels}]or -1 local g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) local a={L,U,T}local seen={}local x=-1 local n=0 for t=1,3 do local v=a[t]if v>=0 and not seen[v]then seen[v]=true if R(n*65536+g*8192+(G[j-${pixels}]or 0)*4096+(p%${width}>0 and G[j-1]or 0)*2048+(p>=${width} and G[j-${width}]or 0)*1024+(j-1)//${pixels}%32*32+1)==0 then x=v break end n=n+1 end end local residual=x<0 if residual then x=0 local prefix=1 for z=8,0,-1 do local v=R(1000000+z*100000+prefix*100+(L//64+1)*10+(T//64+1))x=x*2+v prefix=prefix*2+v end local base=T>=0 and T or L>=0 and L or U>=0 and U or 0 x=(base+(x%2>0 and (x+1)//2 or -x//2))%${ordered.length} end G[j]=residual and 1 or 0 o[j]=x end `;
     const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
-    return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
+    const paletteDecoder = delta ? `u={}v=0 for j=1,${ordered.length} do local z=V(B(P,(j+1)//2))v=v+(j%2>0 and z>>3 or z&7)u[j]=v end ` : '';
+    return `${decoder}${paletteDecoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
   };
   const normal = emitPalette(encodeLzPalette(colours, ordered));
   const binary = binaryGreyscale ? emitPalette(encodeLzPalette(colours, ordered, true)) : '';
-  return binary && binary.length < normal.length ? binary : normal;
+  const differences = deltaPalette();
+  const delta = differences === undefined ? '' : emitPalette({ data: differences, nearGreyscale: true, binaryGreyscale: true }, true);
+  return [normal, binary, delta].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] ?? '';
 }
 
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
