@@ -1,5 +1,6 @@
 # 進捗記録
 
+- `arithmetic-decoder-golf.md` — 算術復号器の短縮と文脈再選択でastralを5,611文字へ短縮
 - `context-arithmetic-frames.md` — 近傍文脈の算術符号と3 bit差分パレットでastralを6,430文字へ短縮
 - `lz-round2-alternatives.md` — 文字集合・直接リテラル・9 bitパレット等の追加案を実測で棄却
 - `lz-pair-decoder.md` — 2文字数値復号とLua描画呼び出しを共通化し、astralを6,943文字へ短縮
