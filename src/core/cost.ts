@@ -513,7 +513,7 @@ export function emitAnimationLuaArithmeticFrames(
     for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
     data += LZ_ALPHABET[value] ?? '';
   }
-  const deltaPalette = (): string | undefined => {
+  const deltaPalette = (): { readonly fixed: string; readonly unary: string; readonly rank: readonly number[] } | undefined => {
     if (!binaryGreyscale) return undefined;
     let previous = 0;
     const differences: number[] = [];
@@ -527,9 +527,25 @@ export function emitAnimationLuaArithmeticFrames(
     }
     let encoded = '';
     for (let index = 0; index < differences.length; index += 2) encoded += LZ_ALPHABET[(differences[index] ?? 0) * 8 + (differences[index + 1] ?? 0)] ?? '';
-    return encoded;
+    const frequencies = Array.from({ length: 8 }, () => 0);
+    for (const difference of differences) frequencies[difference] = (frequencies[difference] ?? 0) + 1;
+    const ranked = Array.from({ length: 8 }, (_, value) => value).sort((left, right) => (frequencies[right] ?? 0) - (frequencies[left] ?? 0) || left - right);
+    const ranks = new Map(ranked.map((value, position) => [value, position] as const));
+    const paletteBits: number[] = [];
+    for (const difference of differences) {
+      const rank = ranks.get(difference) ?? 0;
+      for (let position = 0; position < rank; position += 1) paletteBits.push(1);
+      paletteBits.push(0);
+    }
+    let unary = '';
+    for (let index = 0; index < paletteBits.length; index += 6) {
+      let value = 0;
+      for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (paletteBits[index + bit] ?? 0);
+      unary += LZ_ALPHABET[value] ?? '';
+    }
+    return { fixed: encoded, unary, rank: ranked };
   };
-  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>, delta = false): string => {
+  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>, delta = false, unaryRank?: readonly number[]): string => {
     const colour = delta
       ? `v=u[c+1]g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
       : palette.binaryGreyscale
@@ -540,14 +556,17 @@ export function emitAnimationLuaArithmeticFrames(
     const pairDecoder = delta ? '' : `function W(s,i)return V(B(s,i))*64+V(B(s,i+1))end `;
     const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end ${pairDecoder}i=0 function X()v=V(B(d,i//6+1)or 48)>>(5-i%6)&1 i=i+1 return v end l=0 h=65535 c=0 for j=1,16 do c=c*2+X()end A={}function R(k)a=A[k]or 256 m=l+(h-l+1)*(512-a)//512-1 local v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while true do e=l>>15==h>>15 and l&32768 or l>=16384 and h<49152 and 16384 or -1 if e<0 then break end l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+X()end A[k]=a+(v*510+1-a)//4 return v end G={}for j=1,${values.length} do J=j-1 p=J%${pixels} F=J//${pixels}%32 L=p%${width}>0 and o[j-1]or -1 U=p>=${width} and o[j-${width}]or -1 T=j>${pixels} and o[j-${pixels}]or -1 g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) D={L,U,T}x=-1 n=0 for t=1,3 do Y=D[t]if Y>=0 and (t==1 or Y~=L)and(t<3 or Y~=U)then if R(n<<16|g<<13|(G[j-${pixels}]or 0)<<12|(p%${width}>0 and G[j-1]or 0)<<11|(p>=${width} and G[j-${width}]or 0)<<10|F<<5|(L<0 and 4 or 0)|(U<0 and 2 or 0)|1)==0 then x=Y break end n=n+1 end end G[j]=x<0 and 1 if G[j]then x=0 r=1 for z=8,0,-1 do v=R(-F*1000000-z*100000-r*100-(L//64+1)*10-(T//64+1))x=x*2+v r=r*2+v end w=T>=0 and T or L>=0 and L or U>=0 and U or 0 x=(w+(x%2>0 and (x+1)//2 or -x//2))%${ordered.length} end o[j]=x end `;
     const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
-    const paletteDecoder = delta ? `u={}v=0 for j=1,#P do z=V(B(P,j))v=v+(z>>3)u[j*2-1]=v v=v+(z&7)u[j*2]=v end ` : '';
+    const paletteDecoder = unaryRank
+      ? `k=0 u={}v=0 H={${unaryRank.join(',')}}for j=1,${ordered.length} do z=0 repeat b=V(B(P,k//6+1))>>(5-k%6)&1 k=k+1 z=z+1 until b==0 v=v+H[z]u[j]=v end `
+      : delta ? `u={}v=0 for j=1,#P do z=V(B(P,j))v=v+(z>>3)u[j*2-1]=v v=v+(z&7)u[j*2]=v end ` : '';
     return `${decoder}${paletteDecoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
   };
   const normal = emitPalette(encodeLzPalette(colours, ordered));
   const binary = binaryGreyscale ? emitPalette(encodeLzPalette(colours, ordered, true)) : '';
   const differences = deltaPalette();
-  const delta = differences === undefined ? '' : emitPalette({ data: differences, nearGreyscale: true, binaryGreyscale: true }, true);
-  return [normal, binary, delta].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] ?? '';
+  const fixed = differences === undefined ? '' : emitPalette({ data: differences.fixed, nearGreyscale: true, binaryGreyscale: true }, true);
+  const unary = differences === undefined ? '' : emitPalette({ data: differences.unary, nearGreyscale: true, binaryGreyscale: true }, true, differences.rank);
+  return [normal, binary, fixed, unary].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] ?? '';
 }
 
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
