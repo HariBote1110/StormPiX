@@ -18,7 +18,7 @@ function frame(width: number, height: number, shift: number): Bitmap {
 
 describe('Lua round-trip verification', () => {
   it('executes the arithmetic frame stream on a small colour animation', () => {
-    const frames = [frame(8, 8, 0), frame(8, 8, 2), frame(8, 8, 4)];
+    const frames = Array.from({ length: 35 }, (_, index) => frame(8, 8, index % 6));
     const colours = ['15,25,45', '230,170,40'];
     const indices = frames.map((bitmap) => Uint16Array.from({ length: bitmap.width * bitmap.height }, (_, pixel) => bitmap.data[pixel * 4] === 230 ? 1 : 0));
     const lua = emitAnimationLuaArithmeticFrames(indices, 8, 8, colours, 2);
