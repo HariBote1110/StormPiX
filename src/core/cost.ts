@@ -442,41 +442,43 @@ export function emitAnimationLuaLzFrames(
   });
   const compactLiterals = initialIndexes.length <= 442;
   const build = (offsets: readonly number[]): string => {
-  let sourceIndexes = initialIndexes;
-  const encode = (indexes: readonly number[]) => {
-    const compactIndexes = new Map(indexes.map((index, compact) => [index, compact] as const));
-    const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
-    const greedy = encodeLzFrameStream(values, compactLiterals, offsets);
-    const costed = encodeCostedLzFrameStream(values, compactLiterals, offsets);
-    return costed.data.length < greedy.data.length
-      ? { data: costed.data, frequencies: costed.literalFrequencies }
-      : { data: greedy.data, frequencies: greedy.literalFrequencies };
-  };
-  let encoded = encode(sourceIndexes);
-  if (compactLiterals) {
-    const currentOrder = new Map(sourceIndexes.map((index, position) => [index, position] as const));
-    const frequencyBySource = new Map(sourceIndexes.map((index, position) => [index, encoded.frequencies.get(position) ?? 0] as const));
-    const reordered = [...sourceIndexes].sort((left, right) => (frequencyBySource.get(right) ?? 0) - (frequencyBySource.get(left) ?? 0) || (currentOrder.get(left) ?? 0) - (currentOrder.get(right) ?? 0));
-    const revised = encode(reordered);
-    if (revised.data.length < encoded.data.length) { sourceIndexes = reordered; encoded = revised; }
-  }
-  const data = encoded.data;
-  const literalDecoder = compactLiterals
-    ? `local v=V(B(d,i))i=i+1 if v>57 then v=58+(v-58)*64+V(B(d,i))i=i+1 end o[#o+1]=v `
-    : `o[#o+1]=V(B(d,i))*64+V(B(d,i+1))i=i+2 `;
-  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
-  const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 n=V(B(d,i+2))*64+V(B(d,i+3))+3 i=i+4 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<${64 - offsets.length} then x=1 n=n-9 else x=({${offsets.join(',')}})[n-${63 - offsets.length}]n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
-  const colour = palette.binaryGreyscale
-    ? `p=c*10 k=p//6+1 v=V(B(P,k))*4096+V(B(P,k+1))*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
-    : palette.nearGreyscale
-    ? `v=V(B(P,c*2+1))*64+V(B(P,c*2+2))g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
-    : `local i=c*4+1 local v=V(B(P,i))*262144+V(B(P,i+1))*4096+V(B(P,i+2))*64+V(B(P,i+3))S.setColor(v//65536,v//256%256,v%256)`;
-  const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},z//${width},1,1)end end`;
-  return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
-  };
-  const normal = emitPalette(encodeLzPalette(colours, sourceIndexes));
-  const binary = emitPalette(encodeLzPalette(colours, sourceIndexes, true));
-  return binary.length < normal.length ? binary : normal;
+    let sourceIndexes = initialIndexes;
+    const encode = (indexes: readonly number[]) => {
+      const compactIndexes = new Map(indexes.map((index, compact) => [index, compact] as const));
+      const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => compactIndexes.get(index) ?? 0));
+      const greedy = encodeLzFrameStream(values, compactLiterals, offsets);
+      const costed = encodeCostedLzFrameStream(values, compactLiterals, offsets);
+      return costed.data.length < greedy.data.length
+        ? { data: costed.data, frequencies: costed.literalFrequencies }
+        : { data: greedy.data, frequencies: greedy.literalFrequencies };
+    };
+    let encoded = encode(sourceIndexes);
+    if (compactLiterals) {
+      const currentOrder = new Map(sourceIndexes.map((index, position) => [index, position] as const));
+      const frequencyBySource = new Map(sourceIndexes.map((index, position) => [index, encoded.frequencies.get(position) ?? 0] as const));
+      const reordered = [...sourceIndexes].sort((left, right) => (frequencyBySource.get(right) ?? 0) - (frequencyBySource.get(left) ?? 0) || (currentOrder.get(left) ?? 0) - (currentOrder.get(right) ?? 0));
+      const revised = encode(reordered);
+      if (revised.data.length < encoded.data.length) { sourceIndexes = reordered; encoded = revised; }
+    }
+    const data = encoded.data;
+    const literalDecoder = compactLiterals
+      ? `local v=V(B(d,i))i=i+1 if v>57 then v=58+(v-58)*64+V(B(d,i))i=i+1 end o[#o+1]=v `
+      : `o[#o+1]=V(B(d,i))*64+V(B(d,i+1))i=i+2 `;
+    const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
+      const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 n=V(B(d,i+2))*64+V(B(d,i+3))+3 i=i+4 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<${64 - offsets.length} then x=1 n=n-9 else x=({${offsets.join(',')}})[n-${63 - offsets.length}]n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
+      const colour = palette.binaryGreyscale
+        ? `p=c*10 k=p//6+1 v=V(B(P,k))*4096+V(B(P,k+1))*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
+        : palette.nearGreyscale
+        ? `v=V(B(P,c*2+1))*64+V(B(P,c*2+2))g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
+        : `local i=c*4+1 local v=V(B(P,i))*262144+V(B(P,i+1))*4096+V(B(P,i+2))*64+V(B(P,i+3))S.setColor(v//65536,v//256%256,v%256)`;
+      const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end F(z%${width},z//${width},1,1)end end`;
+      return `${decoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
+    };
+    const normal = emitPalette(encodeLzPalette(colours, sourceIndexes));
+    const binaryPalette = encodeLzPalette(colours, sourceIndexes, true);
+    if (!binaryPalette.binaryGreyscale) return normal;
+    const binary = emitPalette(binaryPalette);
+    return binary.length < normal.length ? binary : normal;
   };
   let best = build(baseOffsets);
   for (let count = 1; count <= Math.min(6 - baseOffsets.length, rankedOffsets.length); count += 1) {
