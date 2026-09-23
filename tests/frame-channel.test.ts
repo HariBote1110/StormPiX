@@ -46,7 +46,7 @@ describe('外部フレーム番号', () => {
     const result = convertFrames(frames, { mode: 'lossless', budget: 8_192, seed: 0 });
     expect(result.withinBudget).toBe(true);
     expect(result.scripts).toHaveLength(1);
-    expect(result.totalCharCount).toBeLessThanOrEqual(6_013);
+    expect(result.totalCharCount).toBeLessThanOrEqual(5_908);
     expect(result.lua).toContain('function R(k)');
     expect(result.lua).not.toContain('function W(s,i)');
     expect(result.lua).not.toContain('seen={}');
