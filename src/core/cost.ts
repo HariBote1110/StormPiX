@@ -60,6 +60,7 @@ function isRectProgram(ops: readonly DrawOp[]): boolean {
 
 const BASE64_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/';
 const LZ_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz>?';
+const LZ_LITERAL_RUN_LIMIT = 12;
 
 function gammaBits(value: number): number[] {
   const binary = (value + 1).toString(2);
@@ -220,7 +221,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
     if (length >= 3) {
       matchFrequencies.set(distance, (matchFrequencies.get(distance) ?? 0) + 1);
       const specialIndex = offsets.indexOf(distance);
-      result += distance === 1 && length <= 54 - offsets.length ? LZ_ALPHABET[length + 9] ?? '' : specialIndex >= 0 ? `${LZ_ALPHABET[64 - offsets.length + specialIndex] ?? ''}${pair(length - 3)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
+      result += distance === 1 && length <= 66 - offsets.length - LZ_LITERAL_RUN_LIMIT ? LZ_ALPHABET[length + LZ_LITERAL_RUN_LIMIT - 3] ?? '' : specialIndex >= 0 ? `${LZ_ALPHABET[64 - offsets.length + specialIndex] ?? ''}${pair(length - 3)}` : `!${pair(distance - 1)}${pair(length - 3)}`;
       for (let offset = 0; offset < length; offset += 1) addReference(index + offset);
       index += length;
       continue;
@@ -229,7 +230,7 @@ function encodeLzFrameStream(values: readonly number[], compactLiterals: boolean
     do {
       addReference(index);
       index += 1;
-      if (index - start === 12 || index >= values.length) break;
+      if (index - start === LZ_LITERAL_RUN_LIMIT || index >= values.length) break;
       const lookahead = references.get(keyAt(index)) ?? [];
       length = 0;
       for (let candidateIndex = lookahead.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
@@ -327,7 +328,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
   for (let index = count - 1; index >= 0; index -= 1) {
     let literalCost = 1;
     let bestCost = Number.POSITIVE_INFINITY;
-    for (let length = 1; length <= 12 && index + length <= count; length += 1) {
+    for (let length = 1; length <= LZ_LITERAL_RUN_LIMIT && index + length <= count; length += 1) {
       const value = values[index + length - 1] as number;
       literalCost += !compactLiterals || value >= 58 ? 2 : 1;
       const cost = literalCost + (costs[index + length] ?? 0);
@@ -348,7 +349,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
     consider(3, generalLength, 5, 1, matchDistances[index] ?? 0);
     const specialLength = repeatMaximum[index] ?? 0;
     consider(3, specialLength, 3, 2, 0);
-    consider(3, Math.min(54 - offsets.length, repeats[0]?.[index] ?? 0), 1, 3, 1);
+    consider(3, Math.min(66 - offsets.length - LZ_LITERAL_RUN_LIMIT, repeats[0]?.[index] ?? 0), 1, 3, 1);
     costs[index] = bestCost;
     update(index, bestCost);
   }
@@ -367,7 +368,7 @@ function encodeCostedLzFrameStream(values: readonly number[], compactLiterals: b
         result += !compactLiterals ? pair(value) : value >= 58 ? `${LZ_ALPHABET[58 + Math.floor((value - 58) / 64)] ?? ''}${LZ_ALPHABET[(value - 58) % 64] ?? ''}` : LZ_ALPHABET[value] ?? '';
       }
     } else if (kind === 3) {
-      result += LZ_ALPHABET[length + 9] ?? '';
+      result += LZ_ALPHABET[length + LZ_LITERAL_RUN_LIMIT - 3] ?? '';
     } else if (kind === 2) {
       const specialIndex = repeats.findIndex((run) => (run[index] ?? 0) >= length);
       result += `${LZ_ALPHABET[64 - offsets.length + specialIndex] ?? ''}${pair(length - 3)}`;
@@ -465,7 +466,7 @@ export function emitAnimationLuaLzFrames(
       ? `local v=V(B(d,i))i=i+1 if v>57 then v=58+(v-58)*64+V(B(d,i))i=i+1 end o[#o+1]=v `
       : `o[#o+1]=V(B(d,i))*64+V(B(d,i+1))i=i+2 `;
     const emitPalette = (palette: ReturnType<typeof encodeLzPalette>): string => {
-      const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 i=i+2 n=64 else n=V(z) if n<12 then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<${64 - offsets.length} then x=1 n=n-9 else x=({${offsets.join(',')}})[n-${63 - offsets.length}]end end if n>=${64 - offsets.length} then n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
+      const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end i=1 while i<=#d do z=B(d,i)i=i+1 if z==33 then x=V(B(d,i))*64+V(B(d,i+1))+1 i=i+2 n=64 else n=V(z) if n<${LZ_LITERAL_RUN_LIMIT} then for j=1,n+1 do ${literalDecoder}end n=0 elseif n<${64 - offsets.length} then x=1 n=n-${LZ_LITERAL_RUN_LIMIT - 3} else x=({${offsets.join(',')}})[n-${63 - offsets.length}]end end if n>=${64 - offsets.length} then n=V(B(d,i))*64+V(B(d,i+1))+3 i=i+2 end for j=1,n do o[#o+1]=o[#o-x+1]end end F=S.drawRectF `;
       const colour = palette.binaryGreyscale
         ? `p=c*10 k=p//6+1 v=V(B(P,k))*4096+V(B(P,k+1))*64+V(B(P,k+2))v=v>>8-p%6&1023 g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
         : palette.nearGreyscale
