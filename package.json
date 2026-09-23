@@ -1,6 +1,6 @@
 {
   "name": "stormpix",
-  "version": "0.1.0-Alpha-28c",
+  "version": "0.1.0-Alpha-28d",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.0",
