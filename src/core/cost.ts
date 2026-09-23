@@ -439,77 +439,73 @@ export function emitAnimationLuaArithmeticFrames(
     return { index, code };
   }).sort((left, right) => left.code - right.code || left.index - right.index).map(({ index }) => index);
   const rank = new Map(ordered.map((index, position) => [index, position] as const));
+  const valueBits = Math.max(1, Math.ceil(Math.log2(ordered.length)));
   const values = frameIndices.flatMap((indices) => Array.from(indices, (index) => rank.get(index) ?? 0));
   const pixels = width * height;
-  const bits: number[] = [];
-  const probabilities = new Map<number, number>();
-  let lower = 0;
-  let upper = 65_535;
-  let pending = 0;
-  const emitBit = (bit: number): void => {
-    bits.push(bit);
-    while (pending > 0) { bits.push(1 - bit); pending -= 1; }
+  const encodeData = (leftBucketWidth: number, previousBucketWidth: number): string => {
+    const probabilities = new Map<number, number>();
+    let low = 0;
+    let range = 16777215;
+    let cache = 0;
+    let cacheSize = 1;
+    const digits: number[] = [];
+    const shiftLow = (): void => {
+      const carry = Math.floor(low / 16777216);
+      const lowWord = low % 16777216;
+      if (lowWord < 16515072 || carry !== 0) {
+        let pending = cache;
+        for (let count = 0; count < cacheSize; count += 1) { digits.push((pending + carry) % 64); pending = 63; }
+        cache = Math.floor(lowWord / 262144);
+        cacheSize = 0;
+      }
+      cacheSize += 1;
+      low = (lowWord % 262144) * 64;
+    };
+    const encodeBit = (key: number, bit: number): void => {
+      let probability = probabilities.get(key) ?? 512;
+      const middle = Math.floor(range / 1024) * (1024 - probability);
+      if (bit === 0) range = middle;
+      else { low += middle; range -= middle; }
+      while (range < 262144) { range *= 64; shiftLow(); }
+      probability += Math.floor((bit * 1022 + 1 - probability) / 6);
+      probabilities.set(key, probability);
+    };
+    const residuals: number[] = [];
+    for (let index = 0; index < values.length; index += 1) {
+      const position = index % pixels;
+      const left = position % width > 0 ? values[index - 1] ?? -1 : -1;
+      const above = position >= width ? values[index - width] ?? -1 : -1;
+      const previous = index >= pixels ? values[index - pixels] ?? -1 : -1;
+      const agreement = Number(left === above) + 2 * Number(left === previous) + 4 * Number(above === previous);
+      const leftResidual = position % width > 0 ? residuals[index - 1] ?? 0 : 0;
+      const aboveResidual = position >= width ? residuals[index - width] ?? 0 : 0;
+      const candidates = [left, previous, above];
+      let matched = false;
+      for (let candidateIndex = 0; candidateIndex < 3; candidateIndex += 1) {
+        const candidate = candidates[candidateIndex] ?? -1;
+        if (candidate < 0 || (candidateIndex > 0 && candidate === left) || (candidateIndex === 2 && candidate === previous)) continue;
+        const boundary = (left < 0 ? 4 : 0) + (above < 0 ? 2 : 0);
+        const key = candidateIndex * 256 + agreement * 32 + leftResidual * 16 + aboveResidual * 8 + boundary + Number(previous >= 0 && position % width > 0 && previous === values[index - pixels - 1]);
+        matched = candidate === values[index];
+        encodeBit(key, matched ? 0 : 1);
+        if (matched) break;
+      }
+      residuals.push(matched ? 0 : 1);
+      if (matched) continue;
+      const zigzag = values[index] ?? 0;
+      let prefix = 1;
+      for (let bit = valueBits - 1; bit >= 0; bit -= 1) {
+        const value = (zigzag >> bit) & 1;
+        const key = 1_000_000 + bit * 100_000 + prefix * 100 + (Math.floor(left / leftBucketWidth) + 1) * 10 + Math.floor(previous / previousBucketWidth) + 1 + (agreement >> 1) * 1_000_000;
+        encodeBit(key, value);
+        prefix = prefix * 2 + value;
+      }
+    }
+    for (let count = 0; count < 5; count += 1) shiftLow();
+    let data = '';
+    for (const digit of digits) data += LZ_ALPHABET[digit] ?? '';
+    return data;
   };
-  const encodeBit = (key: number, bit: number): void => {
-    let probability = probabilities.get(key) ?? 256;
-    const middle = lower + Math.floor((upper - lower + 1) * (512 - probability) / 512) - 1;
-    if (bit === 0) upper = middle;
-    else lower = middle + 1;
-    while (true) {
-      if (upper < 32_768) emitBit(0);
-      else if (lower >= 32_768) { emitBit(1); lower -= 32_768; upper -= 32_768; }
-      else if (lower >= 16_384 && upper < 49_152) { pending += 1; lower -= 16_384; upper -= 16_384; }
-      else break;
-      lower *= 2;
-      upper = upper * 2 + 1;
-    }
-    probability += Math.floor((bit * 510 + 1 - probability) / 4);
-    probabilities.set(key, probability);
-  };
-  const residuals: number[] = [];
-  for (let index = 0; index < values.length; index += 1) {
-    const position = index % pixels;
-    const left = position % width > 0 ? values[index - 1] ?? -1 : -1;
-    const above = position >= width ? values[index - width] ?? -1 : -1;
-    const previous = index >= pixels ? values[index - pixels] ?? -1 : -1;
-    const agreement = Number(left === above) + 2 * Number(left === previous) + 4 * Number(above === previous);
-    const frame = Math.floor(index / pixels);
-    const leftResidual = position % width > 0 ? residuals[index - 1] ?? 0 : 0;
-    const aboveResidual = position >= width ? residuals[index - width] ?? 0 : 0;
-    const candidates = [left, previous, above];
-    let matched = false;
-    for (let candidateIndex = 0; candidateIndex < 3; candidateIndex += 1) {
-      const candidate = candidates[candidateIndex] ?? -1;
-      if (candidate < 0 || (candidateIndex > 0 && candidate === left) || (candidateIndex === 2 && candidate === previous)) continue;
-      const boundary = (left < 0 ? 4 : 0) + (above < 0 ? 2 : 0);
-      const key = candidateIndex * 256 + agreement * 32 + leftResidual * 16 + aboveResidual * 8 + boundary;
-      matched = candidate === values[index];
-      encodeBit(key, matched ? 0 : 1);
-      if (matched) break;
-    }
-    residuals.push(matched ? 0 : 1);
-    if (matched) continue;
-    const base = previous >= 0 ? previous : left >= 0 ? left : above >= 0 ? above : 0;
-    let delta = ((values[index] ?? 0) - base + ordered.length) % ordered.length;
-    if (delta > ordered.length / 2) delta -= ordered.length;
-    const zigzag = delta > 0 ? 2 * delta - 1 : -2 * delta;
-    let prefix = 1;
-    for (let bit = 8; bit >= 0; bit -= 1) {
-      const value = (zigzag >> bit) & 1;
-      const key = 1_000_000 + frame * 1_000_000 + bit * 100_000 + prefix * 100 + (Math.floor(left / 64) + 1) * 10 + Math.floor(previous / 64) + 1;
-      encodeBit(key, value);
-      prefix = prefix * 2 + value;
-    }
-  }
-  pending += 1;
-  emitBit(lower < 16_384 ? 0 : 1);
-  bits.push(...Array.from({ length: 16 }, () => 0));
-  let data = '';
-  for (let index = 0; index < bits.length; index += 6) {
-    let value = 0;
-    for (let bit = 0; bit < 6; bit += 1) value = value * 2 + (bits[index + bit] ?? 0);
-    data += LZ_ALPHABET[value] ?? '';
-  }
   const deltaPalette = (): { readonly fixed: string; readonly unary: string; readonly rank: readonly number[] } | undefined => {
     if (!binaryGreyscale) return undefined;
     let previous = 0;
@@ -542,7 +538,7 @@ export function emitAnimationLuaArithmeticFrames(
     }
     return { fixed: encoded, unary, rank: ranked };
   };
-  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>, delta = false, unaryRank?: readonly number[]): string => {
+  const emitPalette = (palette: ReturnType<typeof encodeLzPalette>, data: string, leftBucketWidth: number, previousBucketWidth: number, delta = false, unaryRank?: readonly number[]): string => {
     const colour = delta
       ? `v=u[c${unaryRank ? '' : '+1'}]g=v//4 S.setColor(g+v//2%2-1,g,g+v%2-1)`
       : palette.binaryGreyscale
@@ -551,19 +547,33 @@ export function emitAnimationLuaArithmeticFrames(
       ? `v=W(P,c*2+1)g=v//16 S.setColor(g+v//4%4-1,g,g+v%4-1)`
       : `local i=c*4+1 local v=W(P,i)*4096+W(P,i+2)S.setColor(v//65536,v//256%256,v%256)`;
     const pairDecoder = delta ? '' : `function W(s,i)return V(B(s,i))*64+V(B(s,i+1))end `;
-    const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end ${pairDecoder}i=0 function X()b=V(B(d,i//6+1))>>(5-i%6)&1 i=i+1 return b end l=0 h=65535 c=0 for j=1,16 do c=c*2+X()end A={}function R(k)a=A[k]or 256 m=l+(h-l+1)*(512-a)//512-1 v=c>m and 1 or 0 if v==0 then h=m else l=m+1 end while l~h<32768 or l>=16384 and h<49152 do e=l~h<32768 and l&32768 or 16384 l=(l-e)*2 h=(h-e)*2+1 c=(c-e)*2+X()end A[k]=a+(v*510+1-a)//4 return v end G={}for j=1,${values.length} do J=j-1 p=J%${pixels} F=J//${pixels} L=p%${width}>0 and o[j-1]or -1 U=p>=${width} and o[j-${width}]or -1 T=j>${pixels} and o[j-${pixels}]or -1 g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) D={L,T,U}x=-1 for t=1,3 do Y=D[t]if Y>=0 and (t==1 or Y~=L)and(t<3 or Y~=T)then if R(t<<8|g<<5|(L>=0 and G[j-1]or 0)<<4|(U>=0 and G[j-${width}]or 0)<<3|(L<0 and 4 or 0)|(U<0 and 2 or 0))==0 then x=Y break end end end G[j]=x<0 and 1 if G[j]then x=0 r=1 for z=8,0,-1 do v=R(-(F<<21|z<<17|r<<8|(L//64+1)<<4|T//64+1))x=x*2+v r=r*2+v end w=T<0 and (L<0 and math.max(U,0)or L)or T x=(w+(x%2>0 and x//2+1 or -x//2))%${ordered.length} end o[j]=x end `;
-    const draw = `function onDraw()q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
+    const decoder = `S=screen P="${palette.data}"d="${data}"o={}B=string.byte function V(n)return n-(n>96 and 61 or n>64 and 55 or n<58 and 48 or 0)end ${pairDecoder}i=0 function X()i=i+1 return V(B(d,i))end h=16777215 c=0 for j=1,5 do c=c*64+X()end A={}function R(k)a=A[k]or 512 m=(h>>10)*(1024-a) v=c<m and 0 or 1 if v==0 then h=m else c=c-m h=h-m end while h<262144 do h=h*64 c=c*64+X()end A[k]=a+(v*1022+1-a)//6 return v end G={}for j=1,${values.length} do J=j-1 p=J%${pixels} L=p%${width}>0 and o[j-1]or -1 U=p>=${width} and o[j-${width}]or -1 T=j>${pixels} and o[j-${pixels}]or -1 g=(L==U and 1 or 0)+(L==T and 2 or 0)+(U==T and 4 or 0) D={L,T,U}x=-1 for t=1,3 do Y=D[t]if Y>=0 and (t==1 or Y~=L)and(t<3 or Y~=T)then if R(t<<8|g<<5|(L>=0 and G[j-1]or 0)<<4|(U>=0 and G[j-${width}]or 0)<<3|(L<0 and 4 or 0)|(U<0 and 2 or 0)|(T>=0 and p%${width}>0 and T==o[j-${pixels}-1]and 1 or 0))==0 then x=Y break end end end G[j]=x<0 and 1 if G[j]then x=0 r=1 for z=${valueBits - 1},0,-1 do v=R(-(z<<17|r<<8|(L//${leftBucketWidth}+1)<<4|T//${previousBucketWidth}+1|(g>>1)<<21))x=x*2+v r=r*2+v end end o[j]=x end `;
+    const draw = `function onDraw()f=t//${ticksPerFrame} q=nil for z=0,${pixels - 1} do c=o[f*${pixels}+z+1]if c~=q then ${colour}q=c end S.drawRectF(z%${width},z//${width},1,1)end end`;
     const paletteDecoder = unaryRank
       ? `k=0 u={}v=0 H={${unaryRank.join(',')}}for j=0,${ordered.length - 1} do z=0 repeat b=V(B(P,k//6+1))>>(5-k%6)&1 k=k+1 z=z+1 until b<1 v=v+H[z]u[j]=v end `
       : delta ? `u={}v=0 for j=1,#P do z=V(B(P,j))v=v+(z>>3)u[j*2-1]=v v=v+(z&7)u[j*2]=v end ` : '';
-    return `${decoder}${paletteDecoder}f=0 t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} f=t//${ticksPerFrame} end ${draw}`;
+    return `${decoder}${paletteDecoder}t=0 function onTick()t=(t+1)%${ticksPerFrame * frameIndices.length} end ${draw}`;
   };
-  const normal = emitPalette(encodeLzPalette(colours, ordered));
-  const binary = binaryGreyscale ? emitPalette(encodeLzPalette(colours, ordered, true)) : '';
   const differences = deltaPalette();
-  const fixed = differences === undefined ? '' : emitPalette({ data: differences.fixed, nearGreyscale: true, binaryGreyscale: true }, true);
-  const unary = differences === undefined ? '' : emitPalette({ data: differences.unary, nearGreyscale: true, binaryGreyscale: true }, true, differences.rank);
-  return [normal, binary, fixed, unary].filter((candidate) => candidate !== '').sort((left, right) => left.length - right.length)[0] ?? '';
+  let best = '';
+  let bestLeft = 64;
+  let bestPrevious = 64;
+  const consider = (leftBucketWidth: number, previousBucketWidth: number): void => {
+    if (leftBucketWidth < 1 || previousBucketWidth < 1) return;
+    const data = encodeData(leftBucketWidth, previousBucketWidth);
+    const normal = emitPalette(encodeLzPalette(colours, ordered), data, leftBucketWidth, previousBucketWidth);
+    const binary = binaryGreyscale ? emitPalette(encodeLzPalette(colours, ordered, true), data, leftBucketWidth, previousBucketWidth) : '';
+    const fixed = differences === undefined ? '' : emitPalette({ data: differences.fixed, nearGreyscale: true, binaryGreyscale: true }, data, leftBucketWidth, previousBucketWidth, true);
+    const unary = differences === undefined ? '' : emitPalette({ data: differences.unary, nearGreyscale: true, binaryGreyscale: true }, data, leftBucketWidth, previousBucketWidth, true, differences.rank);
+    const candidate = [normal, binary, fixed, unary].filter((lua) => lua !== '').sort((left, right) => left.length - right.length)[0] ?? '';
+    if (best === '' || candidate.length < best.length) { best = candidate; bestLeft = leftBucketWidth; bestPrevious = previousBucketWidth; }
+  };
+  for (const leftBucketWidth of [64, 96, 128]) for (const previousBucketWidth of [64, 96, 128]) consider(leftBucketWidth, previousBucketWidth);
+  const centrePrevious = bestPrevious;
+  for (let offset = -8; offset <= 8; offset += 1) consider(bestLeft, centrePrevious + offset);
+  const centreLeft = bestLeft;
+  for (let offset = -8; offset <= 8; offset += 1) consider(centreLeft + offset, bestPrevious);
+  return best;
 }
 
 /** Encode all animation frames as one LZ stream with a compact RGB palette. */
